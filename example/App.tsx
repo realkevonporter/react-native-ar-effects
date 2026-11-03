@@ -27,6 +27,13 @@
  * pre-encode compositing happens natively on a LiveKit track, which
  * this example does not publish.
  *
+ * M4 adds the catalogue picker (EffectPicker): camera mode browses
+ * CATALOGUE_FILTERS and applies the chosen filter to the preview
+ * pipeline (replacing M3's cycle-through button); mock mode browses
+ * CATALOGUE_GIFTS and switches the gift pinned to the scripted face
+ * (replacing M3's hardcoded mock gift). M1 dots mode and the M2 mock
+ * stream are otherwise unchanged.
+ *
  * Requires a dev build (native modules do not run in Expo Go):
  *   npm install
  *   npx expo prebuild
@@ -45,12 +52,13 @@ import {
 import {
   AnchoredGiftOverlay,
   ARCameraView,
-  GOLDEN_SHADES,
+  CATALOGUE_FILTERS,
+  CATALOGUE_GIFTS,
   HostFilterPipeline,
   LandmarkStreamConsumer,
   mediaPipeProvider,
-  WARM_SUNSET,
 } from "react-native-ar-effects";
+import { EffectPicker } from "./EffectPicker";
 import type {
   EffectDefinition,
   FaceFrame,
@@ -72,32 +80,6 @@ function dotIndices(landmarkCount: number): number[] {
   }
   return [...indices].filter((index) => index < landmarkCount);
 }
-
-/** Mock gift: a gold orb pinned above the scripted face's head. */
-const MOCK_GIFT: EffectDefinition = {
-  id: "mock-golden-orb",
-  kind: "gift",
-  name: "Golden Orb",
-  renderPath: "viewer-overlay",
-  anchors: [
-    {
-      landmarkIndices: [1],
-      placement: "above-head",
-      scaleToFace: 1.0,
-      offset: { x: 0, y: -0.05 },
-    },
-  ],
-  assets: [
-    {
-      uri: "data:image/png;base64,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",
-      kind: "image",
-      width: 256,
-      height: 256,
-    },
-  ],
-  animation: { mode: "loop" },
-  trackingLostFallback: "banner",
-};
 
 /** Scripted mock face path (~15fps, matching the camera throttle). */
 const MOCK_INTERVAL_MS = 66;
@@ -132,12 +114,6 @@ function mockPayload(nowMs: number): LandmarkPayload {
 }
 
 /** M3 sample filters cycled by the Filter button (index 0 = off). */
-const FILTERS: Array<EffectDefinition | null> = [
-  null,
-  GOLDEN_SHADES,
-  WARM_SUNSET,
-];
-const FILTER_LABELS = ["Off", "Shades", "Sunset"];
 
 export default function App(): React.JSX.Element {
   const [supported, setSupported] = useState<boolean | null>(null);
@@ -152,11 +128,16 @@ export default function App(): React.JSX.Element {
   const [mockPaused, setMockPaused] = useState(false);
   const [mockViewSize, setMockViewSize] = useState({ width: 0, height: 0 });
   const [mockConsumer] = useState(() => new LandmarkStreamConsumer());
-  const [filterIndex, setFilterIndex] = useState(0);
+  const [selectedFilter, setSelectedFilter] = useState<EffectDefinition | null>(
+    null,
+  );
+  const [selectedGift, setSelectedGift] = useState<EffectDefinition>(
+    CATALOGUE_GIFTS[0],
+  );
   const [filterPlan, setFilterPlan] = useState<FilterFramePlan | null>(null);
   const [cameraViewSize, setCameraViewSize] = useState({ width: 0, height: 0 });
   const [filterPipeline] = useState(() => new HostFilterPipeline());
-  const filterIndexRef = useRef(0);
+  const selectedFilterRef = useRef<EffectDefinition | null>(null);
   const eventTimestamps = useRef<number[]>([]);
   const cleanupRef = useRef<(() => void) | null>(null);
   const startedRef = useRef(false);
@@ -199,7 +180,7 @@ export default function App(): React.JSX.Element {
       // M3 preview: feed the same frame through the filter pipeline
       // when a filter is active (no measured duration on this path —
       // the governor only gates the native track path).
-      if (filterIndexRef.current !== 0) {
+      if (selectedFilterRef.current !== null) {
         setFilterPlan(filterPipeline.handleFrame(frame));
       }
     },
@@ -217,15 +198,17 @@ export default function App(): React.JSX.Element {
     [filterPipeline],
   );
 
-  const cycleFilter = useCallback(() => {
-    const next = (filterIndexRef.current + 1) % FILTERS.length;
-    filterIndexRef.current = next;
-    setFilterIndex(next);
-    filterPipeline.setEffect(FILTERS[next]);
-    if (next === 0) {
-      setFilterPlan(null);
-    }
-  }, [filterPipeline]);
+  const selectFilter = useCallback(
+    (effect: EffectDefinition | null) => {
+      selectedFilterRef.current = effect;
+      setSelectedFilter(effect);
+      filterPipeline.setEffect(effect);
+      if (effect === null) {
+        setFilterPlan(null);
+      }
+    },
+    [filterPipeline],
+  );
 
   const start = useCallback(async () => {
     setError(null);
@@ -323,7 +306,7 @@ export default function App(): React.JSX.Element {
         >
           <AnchoredGiftOverlay
             consumer={mockConsumer}
-            effect={MOCK_GIFT}
+            effect={selectedGift}
             videoSize={{ width: 720, height: 1280 }}
             viewSize={mockViewSize}
             resizeMode="cover"
@@ -340,6 +323,16 @@ export default function App(): React.JSX.Element {
                 : "Gift pinned above the face"}
             </Text>
           </View>
+          <EffectPicker
+            effects={CATALOGUE_GIFTS}
+            selectedId={selectedGift.id}
+            onSelect={(effect) => {
+              if (effect !== null) {
+                setSelectedGift(effect);
+              }
+            }}
+            allowOff={false}
+          />
           <View style={styles.bottomBar}>
             {mockPaused ? (
               <Button title="Resume" onPress={() => setMockPaused(false)} />
@@ -373,7 +366,7 @@ export default function App(): React.JSX.Element {
       />
       <View style={styles.dots} pointerEvents="none">
         {face &&
-          filterIndex === 0 &&
+          selectedFilter === null &&
           dots.map((index) => {
             const point = face.landmarks[index];
             if (!point) {
@@ -409,6 +402,11 @@ export default function App(): React.JSX.Element {
           </Text>
         </View>
         {error !== null && <Text style={styles.error}>{error}</Text>}
+        <EffectPicker
+          effects={CATALOGUE_FILTERS}
+          selectedId={selectedFilter?.id ?? null}
+          onSelect={selectFilter}
+        />
         <View style={styles.bottomBar}>
           {started ? (
             <Button title="Stop" onPress={stop} />
@@ -416,10 +414,6 @@ export default function App(): React.JSX.Element {
             <Button title="Start" onPress={start} />
           )}
           <Button title={`Camera: ${cameraPosition}`} onPress={switchCamera} />
-          <Button
-            title={`Filter: ${FILTER_LABELS[filterIndex]}`}
-            onPress={cycleFilter}
-          />
           <Button title="Mock demo" onPress={enterMock} />
         </View>
       </SafeAreaView>

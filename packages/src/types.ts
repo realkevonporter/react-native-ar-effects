@@ -167,6 +167,21 @@ export interface EffectDefinition {
   id: string;
   kind: "filter" | "gift";
   name: string;
+  /**
+   * Effect-format schema version. Always 1 in M4; the validator
+   * rejects any other value, so a future format change cannot
+   * silently break older consumers (see effect-validation.ts).
+   */
+  formatVersion: number;
+  /**
+   * This effect's own version, starting at 1. Bump it when the
+   * effect's data changes so consumers can tell revisions apart;
+   * it is independent of formatVersion (the schema version).
+   */
+  version: number;
+  /** Discovery tags, e.g. ["funny", "glasses"]. Catalogue entries
+      always carry at least one tag (enforced by catalogue tests). */
+  tags: string[];
   /** Viewer overlay (gifts) or pre-encode (filters). */
   renderPath: "viewer-overlay" | "pre-encode";
   anchors: EffectAnchor[];

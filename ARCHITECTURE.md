@@ -845,6 +845,94 @@ end-to-end, permission flow, first-build Gradle/CocoaPods resolution
 (incl. the fork project-name assumption + WebRTC module import +
 RTCVideoFrame init signature + I420/rotation behavior).
 
+## M4 — Effects catalogue + docs
+
+M3 proved two sample filters end to end. M4 turns samples into a
+catalogue third parties can extend: effects are DATA
+(`EffectDefinition` objects), never hardcoded components, and every
+entry is validated at load.
+
+### Catalogue layout
+
+- `packages/src/catalogue.ts` — `CATALOGUE` (16 entries: 13 filters,
+  then 3 gifts), `CATALOGUE_FILTERS`, `CATALOGUE_GIFTS`,
+  `getEffectById` (throws on unknown ids), `getEffectsByTag`.
+  File order is catalogue order; the example picker reads these
+  arrays directly, so new entries appear automatically.
+- `packages/src/catalogue-assets.ts` — gift artwork as self-contained
+  data URIs (128×128 PNGs drawn in-session: gold orb, heart, star).
+  No Metro asset resolution, no network fetch at render. These are
+  simple geometric images, NOT TikTok-grade animated gift art —
+  animated lottie/svga/video-alpha artwork is animator work that
+  lands with player dependencies in a later milestone; until then
+  such assets render as name pills (M2 behavior).
+- `packages/src/sample-filters.ts` — the M3 samples (Golden Shades,
+  Warm Sunset) now carry the M4 schema fields; they are catalogue
+  entries too (`golden-shades`, `warm-sunset`).
+- `packages/src/effect-validation.ts` — `validateEffectDefinition`
+  / `validateCatalogue` / `decodeBase64ToBytes`
+  (hand-rolled, no Buffer/atob, so it runs under Hermes).
+
+### Schema + versioning
+
+Every entry carries a stable slug `id`, display `name`,
+`formatVersion`, own `version`, and ≥1 `tag`. The two version fields
+are deliberately separate:
+
+- `formatVersion` is the SCHEMA version (M4: 1). It changes only
+  when the `EffectDefinition` shape itself changes. An unknown
+  `formatVersion` fails loud at load — never silently misrenders.
+- `version` is the EFFECT version (starts at 1). It changes when one
+  effect's data changes. Hosts and viewers match by `id`; a version
+  bump tells an app its cached copy is stale.
+
+Validation enforces the full contract (see
+`docs/EFFECT_AUTHORING.md`): slug ids, kind/renderPath invariant
+(filter → pre-encode, gift → viewer-overlay), animation modes,
+fallbacks, anchor indices in [0, 477], `scaleToFace` in (0, 5],
+filter-noop rejection (a filter with neither grade nor shapes renders
+nothing), assets-on-filter and shapes/grade-on-gift rejection, asset
+URI resolution (data: URIs fully decoded and checked, http(s)
+syntactically validated), plus the delegated grade/shape checks from
+M3. Invalid data throws `Invalid effect "<id>": <problem>` at load —
+catalogue import, `HostFilterPipeline.setEffect`,
+`LiveKitFilterAdapter.applyFilter` — never silently at render.
+
+### Renderer envelope (unchanged by M4)
+
+M4 defines no effect the renderers cannot express. Pre-encode
+compositors (iOS CoreImage/CoreGraphics, Android I420/Canvas) draw
+ellipse / rect / line / polyline shapes with `#rrggbb` colors plus
+full-frame grades; the viewer overlay renders image assets via RN
+`Image` (first anchor only) and ignores animation timing and sound
+(sound still unwired, as in M2/M3). Anything outside that envelope
+(gradients, masks, 3D models, particles) is a renderer extension and
+a schema version bump — a milestone, not a catalogue entry.
+
+### Example picker + docs
+
+- `example/EffectPicker.tsx` — RN-core horizontal chip row (filters
+  in camera mode with an Off chip, gifts in mock mode without one)
+  plus a selected-detail line (name · version · tags). Camera mode
+  applies the chosen filter to the preview pipeline and hides dots
+  while a filter is active; mock mode switches the pinned gift.
+  M3's cycle-through button and hardcoded mock gift are gone; M1
+  dots mode and the M2 mock stream are otherwise unchanged.
+- `docs/API.md` — providers, anchor tracker, overlay, filter
+  pipeline, LiveKit adapter, catalogue/validation.
+- `docs/EFFECT_AUTHORING.md` — schema fields, validation rules,
+  worked Cat Ears example, how to add to the catalogue, renderer
+  capability matrix, versioning policy.
+- `docs/INTEGRATION.md` — install (honest: npm lands at M5; pre-M5
+  install is the example's `file:../packages` path), config plugin
+  (camera permission only), provider setup, host filters, viewer
+  anchoring, performance notes.
+- M4 adds NO dependencies: `example/package.json` and
+  `example/yarn.lock` are byte-identical to main, so no lockfile
+  update is owed. No npm publish, no Tokrah integration (both M5).
+  Owed on-device/at M5: real-phone catalogue browsing + filter/gift
+  preview, FPS with catalogue effects, full Tokrah integration.
+
 ## Milestones
 
 - **M1 — Detection provider + example app.** MediaPipe Face Landmarker

@@ -1,4 +1,4 @@
-# AR Effects example app (M1 + M2)
+# AR Effects example app (M1 + M2 + M3 + M4)
 
 Expo app showing what the MediaPipe provider sees and what the M2
 viewer overlay does: the native camera preview with live landmark
@@ -17,10 +17,18 @@ demonstrates gift anchoring with no camera at all.
 - Face count + FPS (rolling 1-second window of provider events).
 - Mock demo (M2, "Mock demo" button) — scripted `LandmarkPayload`s
   animate a face along a Lissajous path while `AnchoredGiftOverlay`
-  pins a Golden Orb gift above its head. No camera, no phone needed.
+  pins a gift above its head. No camera, no phone needed.
   Pause stops the payload stream so the 1.5s fallback banner
   demonstrates; Resume re-anchors. Mock mode never starts the
   provider (it releases the camera first if a session is running).
+  M4 adds a gift picker to mock mode: browse `CATALOGUE_GIFTS` and
+  switch the pinned gift (default Golden Orb).
+- Effect picker (M4, `EffectPicker.tsx`) — camera mode browses
+  `CATALOGUE_FILTERS` as a horizontal chip row and applies the
+  chosen filter to the preview pipeline (Off restores raw); the
+  selected effect's name, version, and tags show underneath.
+  Landmark dots hide while a filter is active. M3's cycle-through
+  button is gone.
 
 ## Run it
 
@@ -51,7 +59,7 @@ metadata with every integrity hash verified by downloading the
 tarball and computing sha512, and a full pattern check proving every
 dependency range has a key (entries are keyed by requested range,
 never exact version). M1 deliberately shipped without one; M2 lands
-it.
+it. M4 adds no dependencies, so the lockfile is unchanged.
 
 ## What is NOT proven yet
 

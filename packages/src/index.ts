@@ -109,3 +109,33 @@ export type {
 export { NativeFilterBridge } from "./filter-bridge";
 
 export { GOLDEN_SHADES, WARM_SUNSET, SAMPLE_FILTERS } from "./sample-filters";
+
+export {
+  CATALOGUE,
+  CATALOGUE_FILTERS,
+  CATALOGUE_GIFTS,
+  CAT_EARS,
+  BUNNY_EARS,
+  CROWN_ROYAL,
+  HALO_ANGEL,
+  NERD_GLASSES,
+  CLOWN_NOSE,
+  KITTY_WHISKERS,
+  HANDLEBAR_MUSTACHE,
+  COOL_MINT,
+  NOIR,
+  VIVID_POP,
+  GOLDEN_ORB_GIFT,
+  LOVE_HEART_GIFT,
+  SUPER_STAR_GIFT,
+  getEffectById,
+  getEffectsByTag,
+} from "./catalogue";
+
+export {
+  validateEffectDefinition,
+  validateCatalogue,
+  decodeBase64ToBytes,
+  EFFECT_FORMAT_VERSION,
+  MAX_LANDMARK_INDEX,
+} from "./effect-validation";
