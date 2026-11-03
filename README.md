@@ -171,7 +171,7 @@ Host filters need the LiveKit React Native fork's video-effect track
   worklets), exactly as the example app does today. No behavior change
   for RN consumers.
 - Native code and the config plugin ship too: `ios/`, `android/`,
-  `app.plugin.js`, `ARFaceEffects.podspec`.
+  `app.plugin.js`, `react-native-ar-effects.podspec`.
 - Publish exclusions live in exactly one place, `packages/.npmignore`
   (unit tests only) — there is no `files` field to conflict with it.
   Publishing runs from `packages/`, so `example/` and `docs/` never

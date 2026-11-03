@@ -810,7 +810,7 @@ data on the track itself.
   autolinking names the project after the npm package name; fix =
   check settings.gradle after prebuild, adjust one line if different).
   org.webrtc classes arrive transitively via fork's api dependency.
-- `packages/ARFaceEffects.podspec`: add `s.dependency
+- `packages/react-native-ar-effects.podspec`: add `s.dependency
   'livekit-react-native-webrtc', '~> 144.1'` + `s.dependency
   'WebRTC-SDK', '=144.7559.10'` with comments (pins must match the
   host app's fork version; first-build resolution confirms).
