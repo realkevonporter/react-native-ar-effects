@@ -32,7 +32,7 @@ per-user bill.
 
 ## Status
 
-**M1 + M2 landed (this branch).** The repository now contains:
+**M1 + M2 landed, M3 built to PR (this branch).** The repository now contains:
 
 - `packages/src/` — the `DetectionProvider` interface, core types, the
   MediaPipe JS wrapper (`mediapipe-provider.ts`), the `ARCameraView`
@@ -41,22 +41,38 @@ per-user bill.
   coordinate mapping (mirror + cover/contain), and the
   `AnchoredGiftOverlay` component (Reanimated shared values, no
   React re-render per frame).
+- `packages/src/` (M3 additions) — host-side pre-encode filters:
+  `HostFilterPipeline` + filter renderer (data-defined shapes +
+  grade, sensor-space geometry) + performance governor (drop /
+  bypass / probe, never blocks the encoder) + `LiveKitFilterAdapter`
+  (fork VideoEffect registry, processor name `ar-effects-filter`) +
+  two sample filters (Golden Shades, Warm Sunset).
 - `packages/ios/` — Swift native module (MediaPipe Face Landmarker,
   VIDEO mode, CPU delegate) + shared camera session + preview view,
   with the `face_landmarker.task` model vendored as a pod resource.
+  M3 adds `ARFilterProcessor` (fork VideoEffect processor: CoreImage
+  grade + CoreGraphics shapes, own MediaPipe detection on track
+  frames) + `ARFilterModule` bridge.
 - `packages/android/` — Kotlin native module (MediaPipe Face
   Landmarker via CameraX) + shared camera session + preview view,
-  with the model vendored as an asset.
+  with the model vendored as an asset. M3 adds `ARFilterProcessor`
+  (fork VideoFrameProcessor: YuvConverter texture→I420 + Canvas
+  grade/shapes) + `ARFilterModule` bridge.
 - `packages/app.plugin.js` — minimal Expo config plugin (camera
-  permission only; autolinking handles the native wiring).
+  permission only; autolinking handles the native wiring). M3 needs
+  NO plugin change.
 - `example/` — Expo app: native preview + live landmark dots + face
   count + FPS, plus an M2 mock mode (scripted face path with a gift
-  pinned to it, no camera needed) and a committed `yarn.lock`.
+  pinned to it, no camera needed), plus an M3 filter preview toggle
+  (Off / Golden Shades / Warm Sunset over the camera preview — an
+  approximation of intent, not the encoded output) and a committed
+  `yarn.lock` (unchanged by M3: no new dependencies).
   Pure-TS unit tests for the M2 stack live in
   `packages/src/__tests__/` (37 tests: serialization, mapping,
-  smoothing, fallback).
+  smoothing, fallback); M3 adds tests for the renderer, governor,
+  pipeline, adapter, and sample filters.
 
-**On-device verification is owed and is NOT claimed by M1 or M2.**
+**On-device verification is owed and is NOT claimed by M1, M2, or M3.**
 The sandbox has no phone and no iOS/Android build environment, so the
 native code is uncompiled and untested on hardware, and the overlay
 has only been exercised in mock mode. The first human device pass must
@@ -64,7 +80,10 @@ confirm: dev build installs, camera permission flow, dots track the
 face on front and back cameras, the gift stays pinned as the face
 moves, fallback shows on real tracking loss, FPS holds near the 15fps
 throttle with the overlay rendering, and the camera toggle switches
-cleanly. Do not ship this to users until that pass is green.
+cleanly. M3 additionally owes, at M5: a real-phone filtered LiveKit
+publish (viewers see the filter), FPS under filter load, and the
+first-build Gradle/CocoaPods resolution of the fork wiring. Do not
+ship this to users until that pass is green.
 
 ## Roadmap
 
@@ -75,9 +94,12 @@ cleanly. Do not ship this to users until that pass is green.
 - **M2 — Viewer-side gift anchoring.** Landmark stream over the live socket;
   viewers pin gift overlays to streamed anchors, with fallback to
   banner/stage when tracking is lost.
-- **M3 — Host-side pre-encode filters.** Custom camera capturer feeding
-  frames through detection + filter render *before* encode, bridged into
-  LiveKit React Native. This is the hard phase.
+- **M3 — Host-side pre-encode filters.** Fork VideoEffect processor
+  (not a custom capturer — see the M3 spike record in
+  `ARCHITECTURE.md`) + LiveKit adapter + native compositors, so a
+  host's filter reaches every viewer through the encoded video. The
+  example app previews filter intent over the camera; true filtered
+  publishing is proven at M5.
 - **M4 — Effects catalogue + docs.** A starter set of data-defined filters
   and gift effects, plus integration guides.
 - **M5 — npm publish.** `react-native-ar-effects` on npm, versioned releases.

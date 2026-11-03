@@ -178,6 +178,17 @@ export interface EffectDefinition {
   soundUri?: string;
   /** What to do when face tracking is lost (gifts). */
   trackingLostFallback: "banner" | "stage" | "hide";
+  /**
+   * Vector shapes drawn by the pre-encode compositor (M3 filters).
+   * Absent/empty = no shapes (grade-only filters). Shapes are data,
+   * like everything else in an effect — see FilterShapeDef.
+   */
+  shapes?: FilterShapeDef[];
+  /**
+   * Full-frame color grade (M3 filters). Applies whether or not a
+   * face is tracked; shapes still need a face. Absent = no grade.
+   */
+  grade?: FilterGradeParams;
 }
 
 /**
@@ -234,4 +245,104 @@ export interface LandmarkStreamConsumerConfig {
    * different face just because the host's face dropped.
    */
   primaryFaceId?: string | null;
+}
+
+/**
+ * Color-grade parameters for a full-frame filter (M3). All fields are
+ * required in a resolved grade; see resolveGradeParams for defaults.
+ * The formula is documented in filter-renderer.ts and mirrored by the
+ * native compositors so TS preview and encoded output agree:
+ * warmth scales R/B gains, then saturation, contrast, brightness.
+ */
+export interface FilterGradeParams {
+  /** Warmth in [-1, 1]: positive = warmer (more red, less blue). */
+  warmth: number;
+  /** Additive brightness, roughly [-1, 1] (0 = unchanged). */
+  brightness: number;
+  /** Saturation multiplier (1 = unchanged). */
+  saturation: number;
+  /** Contrast multiplier around mid-grey (1 = unchanged). */
+  contrast: number;
+}
+
+/**
+ * One vector shape inside a data-defined filter (M3). Shapes are drawn
+ * by the native pre-encode compositor; the TS filter renderer computes
+ * the same geometry in normalized frame space for preview + tests.
+ * Geometry is relative to the shape's anchor rect (fractions of the
+ * rect's width/height), so shapes scale with the face automatically.
+ */
+export interface FilterShapeDef {
+  kind: "ellipse" | "rect" | "line" | "polyline";
+  /** Index into the effect's anchors array. */
+  anchor: number;
+  /**
+   * Sub-rect within the anchor rect, as fractions (default: the full
+   * anchor rect { x: 0, y: 0, width: 1, height: 1 }).
+   */
+  rect?: { x: number; y: number; width: number; height: number };
+  /**
+   * Points for line (2 points) / polyline (2+ points), as fractions
+   * of the anchor rect. Ignored for ellipse/rect.
+   */
+  points?: Array<{ x: number; y: number }>;
+  /** Stroke/fill color as #rrggbb. */
+  color: string;
+  /** Ellipses/rects: filled vs stroked outline. Default false. */
+  fill?: boolean;
+  /** Stroke width as a fraction of frame width. Default 0.008. */
+  lineWidth?: number;
+}
+
+/**
+ * One draw command produced by the M3 filter renderer, in normalized
+ * 0..1 frame space (origin top-left, sensor space — the same space
+ * the pre-encode compositor draws in, so no mirroring is applied here;
+ * see filter-renderer.ts). The native compositors consume this shape
+ * (via JSON) and the example preview renders it with RN Views.
+ */
+export type FilterDrawCommand =
+  | {
+      kind: "shape";
+      shape: "ellipse" | "rect" | "line" | "polyline";
+      /** Absolute rect in normalized frame space. */
+      rect: { x: number; y: number; width: number; height: number };
+      /** Absolute points in normalized frame space (line/polyline). */
+      points: Array<{ x: number; y: number }>;
+      color: string;
+      fill: boolean;
+      lineWidth: number;
+    }
+  | { kind: "grade"; params: FilterGradeParams };
+
+/**
+ * One frame of filter output from HostFilterPipeline (M3). Consumers
+ * render `commands` only when `filtered` is true; on a dropped frame
+ * commands is empty and droppedReason explains why, so nobody ever
+ * renders a stale filter state.
+ */
+export interface FilterFramePlan {
+  timestampMs: number;
+  effectId: string | null;
+  filtered: boolean;
+  commands: FilterDrawCommand[];
+  droppedReason?: "no-filter" | "no-face" | "over-budget" | "bypassed";
+}
+
+/** Tuning for HostFilterPipeline + FilterPerformanceGovernor (M3). */
+export interface HostFilterConfig {
+  /** Target filtered frame rate; frame budget = 1000 / targetFps. */
+  targetFps?: number;
+  /** Consecutive over-budget frames before the filter bypasses. */
+  maxConsecutiveDrops?: number;
+  /** Cooldown in ms before a bypassed pipeline probes one frame. */
+  bypassCooldownMs?: number;
+}
+
+/** Observable status of a HostFilterPipeline (M3). */
+export interface FilterPipelineStatus {
+  effectId: string | null;
+  bypassed: boolean;
+  consecutiveDrops: number;
+  framesSeen: number;
 }

@@ -186,6 +186,16 @@ video **before encoding**: camera frame → detection → filter render →
 encoder → network. A filter the host alone sees (preview-only) is fake and
 is explicitly out of scope.
 
+> **Correction (M3 spike — the plan above changed).** The original
+> plan called for a custom camera capturer bridged into LiveKit's
+> WebRTC fork. The M3 spike proved the fork ALREADY ships the bridge:
+> a `VideoEffect` processor registry that routes camera frames
+> capturer → processor → encoder inside WebRTC. M3 therefore builds
+> a processor, not a capturer — no custom capturer, no LiveKit client
+> changes, no frame-injection API needed. The list below is kept for
+> history with the superseded items struck through in prose; the M3
+> spike record (below, after the M2 record) carries the evidence.
+
 ### Why this is the hard phase
 
 React Native live apps do not normally own the camera-to-encoder path.
@@ -193,32 +203,39 @@ LiveKit React Native publishes camera frames through its own native
 capturer, built on LiveKit's WebRTC fork. To composite before encode, we
 must:
 
-1. **Build a custom camera capturer** (Swift on iOS, Kotlin on Android)
-   that replaces LiveKit's default capturer for the host's video track.
-2. **Bridge it into LiveKit's WebRTC fork** — the capturer must speak the
-   fork's frame format and lifecycle, and survive LiveKit's track
-   publish/unpublish, mute, and reconnection paths.
+1. **Register a filter processor with the fork's VideoEffect registry**
+   (Swift on iOS, Kotlin on Android) — the fork routes the host's
+   camera frames through it before the encoder. (Supersedes the
+   original "custom camera capturer" plan; see the M3 spike record.)
+2. **Bridge it into LiveKit's WebRTC fork** — the processor must speak
+   the fork's frame format and lifecycle, and survive LiveKit's track
+   publish/unpublish, mute, and reconnection paths. The adapter
+   (`livekit-adapter.ts`) owns the JS side of this bridge.
 3. **Ship it as an Expo config plugin** so host apps (Expo-based, like the
    ones this SDK is built for) get the native code wired into their builds
-   without hand-editing Xcode/Gradle projects.
-4. **Render filters on the frame** (Skia/Metal on iOS, Skia/OpenGL on
-   Android) at camera frame rate, without dropping the encode pipeline
-   below real-time. Filter rendering must be GPU-side; CPU compositing
-   will not hold 30fps on mid-range phones.
+   without hand-editing Xcode/Gradle projects. (M3 needs NO plugin
+   change: the camera permission the filter needs is already covered
+   by M1's plugin; autolinking wires the new module. See the M3
+   implementation record.)
+4. **Render filters on the frame** (native compositing on iOS and
+   Android — NOT React Native Skia; see the M3 spike record for why
+   Skia lost) at camera frame rate, without dropping the encode pipeline
+   below real-time. The performance contract (§M3 below) is: over-budget
+   frames pass through unfiltered, never block the encoder; persistent
+   slowness bypasses the filter entirely until a probe recovers.
 5. **Keep audio untouched.** The compositor touches video frames only;
    the audio track flows through LiveKit unchanged.
 
 This is M3, not M1, for a reason: M1/M2 (detection + viewer gift anchors)
-deliver real value without it, and M3's capturer bridge is the piece most
+deliver real value without it, and M3's fork bridge is the piece most
 likely to break across LiveKit/React Native upgrades. It gets its own
 milestone, its own example app, and its own device-testing pass.
 
 ### Filter pipeline (host)
 
 ```
-Camera (custom capturer)
-  → Detection provider (MediaPipe/ML Kit/Vision, same interface as §1)
-  → Filter renderer (Skia/Metal/OpenGL, GPU)
+WebRTC camera (fork's capturer — NOT ours)
+  → VideoEffect processor (M3: detection + filter render, pre-encode)
   → Encoder (LiveKit WebRTC fork) → viewers
 ```
 
@@ -278,6 +295,17 @@ Effect assets themselves (the lion artwork, the whale animation) are
 animator work or licensed assets — the SDK plays them, it does not draw
 them. The starter catalogue (M4) ships a small set of data-defined effects
 to prove the format; the community can add more without touching SDK code.
+
+**M3 extension (filters only).** `EffectDefinition` gains two optional
+fields (see `packages/src/types.ts`): `shapes?: FilterShapeDef[]`
+(vector shapes — ellipse / rect / line / polyline — drawn by the
+pre-encode compositor, positioned by anchor rects) and
+`grade?: FilterGradeParams` (full-frame color grade: warmth [-1, 1],
+brightness, saturation and contrast multipliers). Both are data, like
+everything else in an effect. Grade applies with or without a face;
+shapes need a tracked face. Filters are still `renderPath:
+"pre-encode"`, `kind: "filter"`, with `animation: { mode: "loop" }`
+(they persist while active, unlike one-shot gifts).
 
 ## M1 spike record — provider decision
 
@@ -479,6 +507,344 @@ stream subscription — per-frame updates never touch React state
 | Example lockfile | `example/yarn.lock` (yarn v1) generated and verified: 472 registry packages, all 472 tarballs hash-verified (sha512), 564 keys, 0 pattern-check misses. Entries keyed by requested range. | Install from the lockfile on a real toolchain (sandbox proxy mangles some registry metadata through package managers, so install itself was not run here). |
 | On-device behavior (M1 + M2) | Example mock mode (scripted face path + pinned gift + pause-to-fallback) lets anchoring be judged without a phone. | Real-phone pass: dev build, permission flow, dots + anchored gift tracking front/back cameras, fallback behavior on real loss, FPS with the overlay rendering. |
 
+## M3 spike record — LiveKit publish path + renderer decision
+
+Step 0 of M3, done before any pipeline code was written. Sources are
+the fork's shipped source (`@livekit/react-native-webrtc` 144.1.2,
+`@livekit/react-native` 2.12.0, `livekit-client` 2.22.1), read
+directly — not assumed from docs.
+
+### LiveKit publish path: the fork's VideoEffect registry (VERDICT: SUPPORTED)
+
+The fork already ships the bridge M3 needs. No custom capturer
+subclass, no LiveKit client changes, no frame-injection API:
+
+- **Android** (`package/android/src/main/java/com/oney/WebRTCModule/videoEffects/`):
+  `ProcessorProvider.addProcessor(name, factory)` (static, stores a
+  factory per name) + `VideoFrameProcessor.process(frame,
+  textureHelper): VideoFrame` + `VideoEffectProcessor implements
+  VideoProcessor`, wired via `videoSource.setVideoProcessor(...)` in
+  `GetUserMediaImpl.setVideoEffects`. Frames flow capturer →
+  processor → sink (encoder). `onFrameCaptured` retains the input,
+  runs each processor, sends the output to the sink, then releases
+  both — so a processor may return the input frame (pass-through) or
+  a fresh frame; both are ownership-correct.
+- **iOS** (`package/ios/RCTWebRTC/videoEffects/`):
+  `ProcessorProvider +addProcessor:forName:` (stores an INSTANCE, not
+  a factory) + `VideoFrameProcessorDelegate`
+  (`capturer:didCaptureVideoFrame: -> RTCVideoFrame*`) +
+  `VideoEffectProcessor: RTCVideoCapturerDelegate`, wired via
+  `capturer.delegate = videoEffectProcessor` in
+  `mediaStreamTrackSetVideoEffects`. Same pre-encode chain.
+- **JS**: `MediaStreamTrack._setVideoEffects([names])` (private/custom
+  API in the fork, but shipped in 144.1.2) → native
+  `mediaStreamTrackSetVideoEffects`. Empty names array = clean
+  pass-through on both platforms (iOS forwards the frame unchanged
+  with zero processors; Android's processor list is empty) — so
+  `clearFilter` via `_setVideoEffects([])` works.
+- **Normal publish is unchanged**: the app gets a camera track via
+  `getUserMedia` / `createLocalVideoTrack`, the adapter applies the
+  effect, the app publishes the track as usual. `livekit-client`
+  2.22.1 exports `LocalVideoTrack` / `createLocalVideoTrack` /
+  `publishTrack` as usual.
+
+**What does NOT exist: a frame-injection API.** Local tracks come
+ONLY from camera/screen capturer controllers via `getUserMedia`
+(`createVideoTrack` takes a capture controller). There is no API for
+feeding SDK-produced frames into a track — so an M1-session
+frame-source path is NOT available, and M3 does not pretend otherwise.
+M1's camera session cannot feed a LiveKit track; the filtered track
+uses WebRTC's camera, and the processor runs its own MediaPipe
+detection on those frames.
+
+**Caveats, all load-bearing for M5:**
+- Camera tracks only. Android's `setVideoEffects` applies only when
+  the controller is a `CameraCaptureController`; iOS requires a local
+  track with a capture controller. Screen-share tracks cannot be
+  filtered — fine for the host-camera case.
+- iOS shares ONE processor instance + ONE module-level
+  `videoEffectProcessor` → ONE filtered camera track at a time.
+  Exactly the host-camera case; multi-track filtering is out of scope.
+- Android unknown processor names are logged + skipped silently, and
+  `_setVideoEffects` returns void — JS cannot detect a skip. The
+  adapter therefore registers before applying and treats a
+  registration failure as an error (fail loud at registration, not
+  silent at apply).
+- JS `_setVideoEffects` is private/custom → the adapter
+  feature-detects (`typeof === 'function'`) and throws a clear
+  `FilterNotSupportedError` otherwise.
+
+### Renderer: native compositing, NOT React Native Skia (VERDICT: NATIVE WINS)
+
+`@shopify/react-native-skia` 2.14.0 DOES ship headless/offscreen
+APIs (`makeOffscreenSurface`, `drawOffscreen`, `Offscreen` renderer
+export) — but they render JS-driven scenes to images. They cannot sit
+in the fork's native per-frame pipeline (VideoFrame in → VideoFrame
+out, GPU textures, encoder timing) without per-frame GPU readback
+through JS. Not viable for pre-encode. Winner: native compositing
+inside the processor — iOS CoreImage (grade) + CoreGraphics (shapes)
+into a new `CVPixelBuffer` → new `RTCVideoFrame` (same timestamp);
+Android I420 buffer path (`toI420` → draw → wrap) for M3 simplicity,
+with a documented GLES fast-path follow-up. **Consequence: NO Skia
+dependency is added in M3, so `example/package.json` is untouched
+and NO lockfile update is needed** (the task's lockfile clause is
+vacuous for M3 — stated here, not silently skipped).
+
+### Camera ownership reconciliation (spike-corrected architecture)
+
+"One camera, one flow" still holds, but the flow changed: M1's
+provider session and a filtered LiveKit track cannot run concurrently
+on one camera. The M3 filtered track uses WebRTC's camera; the
+processor runs its own MediaPipe detection on those frames (same
+engine + model as M1, hosted in the processor) and emits landmarks to
+JS so the host app can forward them over the socket for M2 viewer
+anchoring at M5. M1's standalone session remains for detection-only
+use. The TS `HostFilterPipeline` therefore does NOT own a camera: it
+consumes `FaceFrame`s from any detector (M1 provider events in the
+example preview, M3 processor landmark events on a LiveKit track at
+M5) and emits plans; the native compositor consumes the same effect
+data on the track itself.
+
+### Registration mechanics (planned, first-build verification owed)
+
+- **iOS**: podspec adds `livekit-react-native-webrtc ~> 144.1` +
+  `WebRTC-SDK = 144.7559.10` (exact pin matching the fork's podspec,
+  verified in the fork source: podspec name
+  `livekit-react-native-webrtc`, version from package.json 144.1.2,
+  platforms iOS 12.0+, `source_files ios/**/*.{h,m}`, dependency
+  `React-Core` + `WebRTC-SDK =144.7559.10`,
+  `DEFINES_MODULE=YES`). Swift processor imports WebRTC types only;
+  registry access uses runtime lookup (`NSClassFromString(
+  "ProcessorProvider")` + `perform(_:with:with:)` for
+  `addProcessor:forName:`) to avoid fork header/module-map fragility
+  for the dashed pod name. The processor class is an NSObject
+  subclass with an `@objc capturer:didCaptureVideoFrame:` method
+  whose selector matches the fork's delegate protocol structurally;
+  runtime message dispatch does not check declared protocol
+  conformance. If the class is missing at runtime → clear
+  registration error.
+- **Android**: processor class implements the fork's
+  `VideoFrameProcessor` directly (compile-time import
+  `com.oney.WebRTCModule.videoEffects.*`). Build.gradle adds
+  `implementation project(':livekit-react-native-webrtc')` with a
+  comment stating the assumption (autolinking names the project after
+  the npm package name) + fix instruction (check `settings.gradle`
+  after prebuild; adjust one line if different). `org.webrtc`
+  classes come transitively via the fork's `api
+  'io.github.webrtc-sdk:android:144.7559.05'` (api = transitive).
+  The factory returns the SHARED processor instance (not a fresh one
+  per call) so module filter state reaches the track's processor —
+  consistent with the one-filtered-track limit on both platforms.
+  The new module is added to the EXISTING
+  `ARFaceLandmarkerPackage.createNativeModules` — no second package
+  class.
+- **Fork facts recorded**: webrtc podspec as above; Android fork
+  build.gradle: namespace `com.oney.WebRTCModule`, minSdk 24, `api
+  'io.github.webrtc-sdk:android:144.7559.05'`, implementation
+  `react-android:+`, `androidx.core:core:1.7.0`. Fork package.json
+  peers (via `@livekit/react-native` 2.12.0):
+  `@livekit/react-native-webrtc ^144.1.2`, `livekit-client ^2.19.0`,
+  `react *`, `react-native *`. Note: the fork's minSdk 24 exceeds
+  this SDK's minSdk 23 — filter users need minSdk 24 (the host app
+  already does, via the fork itself); M1-only apps are unaffected.
+
+## M3 implementation record — host-side pre-encode filters
+
+### TS core (`packages/src/`, pure + tested)
+
+- **Types** (`types.ts`): `FilterGradeParams` (warmth [-1, 1],
+  brightness, saturation + contrast multipliers), `FilterShapeDef`
+  (kind ellipse | rect | line | polyline; anchor index into
+  `effect.anchors`; sub-rect fractions of the anchor rect; polyline
+  points fractions; color #rrggbb; fill; lineWidth as fraction of
+  frame width, default 0.008), `FilterDrawCommand` (shape | grade, in
+  normalized 0..1 frame space), `FilterFramePlan` (timestampMs,
+  effectId | null, filtered boolean, commands, droppedReason
+  "over-budget" | "no-filter" | "no-face" | "bypassed"),
+  `HostFilterConfig`, `FilterPipelineStatus`.
+  `EffectDefinition` gains optional `shapes?` + `grade?` —
+  backward-compatible: filters are still DATA, not code.
+- **Filter renderer** (`filter-renderer.ts`): `renderFilterCommands(
+  effect, faceState | null, { mirrored })` — grade commands always
+  apply when present; anchor shapes only with a tracked face (no face
+  → shapes omitted, grade still applies). Anchor math mirrors M2
+  (`resolveAnchorPoint` on `FaceAnchorState`; anchor rect width =
+  `scaleToFace` × bounds.width, height = `scaleToFace` ×
+  bounds.height; above-head bottom-pins, on-face/follow center).
+  Pre-encode compositing uses sensor space directly (NO flip) because
+  detection + compositing share the frame's coordinate space; the
+  `mirrored` option exists only for pipelines that mirror frames
+  before compositing (not M3's) and defaults false. Grade formula
+  (shared TS + native, same order): warmth → R *= (1+0.2w), B *=
+  (1−0.2w); saturation gray-mix (Rec. 601 luminance); contrast
+  (rgb−0.5)*c+0.5; brightness rgb += b. `validateFilterEffect`
+  fails bad data at load time, not mid-frame.
+- **Performance governor** (`performance-governor.ts`): budget =
+  1000/targetFps ms (default ~66ms at 15fps); over-budget frame
+  passes through UNFILTERED (never blocks the encoder); consecutive
+  over-budget frames counted; at MAX_CONSECUTIVE_DROPS (default 8)
+  the pipeline enters bypass (filter off, pass-through) +
+  onFilterBypassed; after BYPASS_COOLDOWN_MS (default 3000ms) a probe
+  frame is attempted (within budget → filtering resumes; over →
+  bypass restarts, no flapping). TS governor is the shared logic +
+  preview/test reference; native processors implement identical
+  thresholds with real measured durations.
+- **Filter pipeline** (`filter-pipeline.ts`): `HostFilterPipeline` —
+  does NOT own a camera (M3 corrected architecture); consumes
+  `FaceFrame`s from any detector. Owns an `AnchorTracker` per primary
+  face (single face for M3, matching M1 maxFaces default 1) fed via
+  `payloadFromFrame` with the union of the active effect's anchor
+  indices (subset rule, §2). Methods: `setEffect(effect | null)`
+  (validates, resets tracker + governor), `handleFrame(frame,
+  measuredDurationMs?)` → `FilterFramePlan` (grade-only effects skip
+  detection entirely; no active effect → filtered:false,
+  droppedReason "no-filter"; anchor filter with no face → shapes
+  omitted, droppedReason "no-face" unless grade present),
+  `handleFaceLost`, `getStatus`, `reset`. Governor consulted only
+  when a measured duration is supplied (TS path otherwise applies;
+  native enforces with real measurements).
+- **LiveKit adapter** (`livekit-adapter.ts`, pure, NO react-native
+  import — Node-testable): `PROCESSOR_NAME = "ar-effects-filter"`;
+  `LiveKitFilterAdapter` with injectable `FilterNativeBridge`;
+  `applyFilter(track, effect)` validates track.kind === "video",
+  requires bridge (else `FilterNotSupportedError`), registerProcessor()
+  idempotent, `setFilter(JSON.stringify(effect))`, then
+  `track._setVideoEffects([PROCESSOR_NAME])` if function exists else
+  `FilterNotSupportedError` (fork `_setVideoEffects` missing — need
+  @livekit/react-native-webrtc 144.x); returns {trackId, effectId,
+  processorName}. `clearFilter(track)` = bridge.clearFilter() +
+  `track._setVideoEffects([])` (verified pass-through with empty
+  processors on both platforms). Status/bypass events come via bridge
+  events (M5 wiring).
+- **Filter bridge** (`filter-bridge.ts`): RN `NativeModules.ARFilter`
+  wrapper implementing `FilterNativeBridge` (registerProcessor /
+  setFilter / clearFilter) — imported by apps, NOT by unit tests
+  (tests use a fake bridge).
+- **Sample filters** (`sample-filters.ts`, data only, renderPath
+  pre-encode, kind filter, animation loop, trackingLostFallback
+  "hide" — shapes hide when no face; grade unaffected): (1)
+  GOLDEN_SHADES — anchors [{landmarkIndices: [33, 263] (eye
+  corners), placement "on-face", scaleToFace: 1.15}], shapes: left
+  lens ellipse {x:0.02,y:0.25,w:0.44,h:0.5} gold stroke, right lens
+  {x:0.54,y:0.25,w:0.44,h:0.5} gold stroke, bridge line points
+  [(0.46,0.5),(0.54,0.5)] gold, assets []. (2) WARM_SUNSET — anchors
+  [], grade {warmth:0.3, brightness:0.04, saturation:1.18,
+  contrast:1.06}, assets [].
+- **Tests** (node --test, strict tsc compile, mirroring M2 pattern):
+  filter-renderer (compositing math, filter application from
+  EffectDefinition data, anchor placement from landmarks, grade
+  always / shapes-only-with-face), performance-governor
+  (drop/bypass/probe/recover), filter-pipeline (state machine,
+  subset indices, no-filter/no-face/grade-only paths),
+  livekit-adapter (fake track + fake bridge: register→apply→clear,
+  missing _setVideoEffects → FilterNotSupportedError, unknown-name
+  silent-skip caveat documented), sample-filters (definitions valid,
+  anchors resolve, renderPath pre-encode).
+- **index.ts exports**: all new types, classes, functions, sample
+  filters.
+
+### Native (written, uncompiled, disclosed as owed — same honesty standard as M1/M2)
+
+- **iOS** `packages/ios/ARFilterProcessor.swift` (@objc NSObject;
+  method `capturer(_: RTCVideoCapturer, didCaptureVideoFrame:) ->
+  RTCVideoFrame`): holds FaceLandmarker (same options pattern as
+  ARCameraSession: model from bundle, VIDEO mode, numFaces 1,
+  minFaceDetectionConfidence 0.5, outputFaceBlendshapes false — not
+  needed for filters, saves compute), current filter state (parsed
+  JSON: grade + shapes + anchor defs), governor counters, monotonic
+  timestamps (max(prev+1), as in M1). Per frame: no filter /
+  bypassed-in-cooldown → return frame unchanged; CVPixelBuffer frames
+  only (I420 frames pass through unfiltered, documented limitation —
+  camera capturer produces pixel buffers); detection skipped when
+  filter is grade-only; landmarks from MPImage(pixelBuffer:) → first
+  face → bounds from extremes (as in M1); anchor math mirrors TS;
+  grade via CoreImage (CIColorMatrix warmth + CIColorControls
+  saturation/brightness/contrast) rendered to a new pixel buffer;
+  shapes via CoreGraphics on top; wrap as RTCCVPixelBuffer →
+  RTCVideoFrame(buffer:rotation:timeStampNs:) with original timestamp
+  + rotation (first-build verification point for the init signature).
+  Over-budget → return ORIGINAL frame + drops++ → bypass +
+  onFilterBypassed via module closure; landmark emission to JS via
+  onLandmarks closure → module emits onFilterFrame (same shape as M1
+  onFaceFrame) for M5 socket forwarding.
+- **iOS** `packages/ios/ARFilterModule.swift` (RCTEventEmitter
+  "ARFilter", mirroring M1's ARFaceLandmarker pattern):
+  registerProcessor (runtime NSClassFromString lookup +
+  performSelector addProcessor:forName: with shared processor
+  instance; idempotent), setFilter(effectJson), clearFilter; events
+  onFilterFrame + onFilterBypassed (main queue for emit, as in M1).
+  Camera permission already covered by existing plugin — no plugin
+  changes.
+- **Android** `packages/android/src/main/java/com/areffects/ARFilterProcessor.kt`
+  (implements fork VideoFrameProcessor): holds FaceLandmarker
+  (tasks-vision VIDEO mode, asset "face_landmarker.task", numFaces 1,
+  same options as ARCameraSession.kt), filter state (org.json),
+  governor counters. Per frame: no filter / bypassed-in-cooldown →
+  return frame; texture frames convert via YuvConverter (verified in
+  the real 144.7559.05 artifact: `YuvConverter.convert(
+  TextureBuffer): I420Buffer` exists; `TextureBuffer.toI420()` does
+  NOT — conversion failure passes through, never crashes the stream);
+  I420 path: buffer.toI420() → YUV→ARGB (BT.601, documented) →
+  Bitmap → detect first on clean bitmap (skipped when grade-only) →
+  Canvas draw grade (single composed ColorMatrix, same formula as TS)
+  + shapes (Paint: oval/rect/lines/path, hex color parse, stroke =
+  lineWidth × width) → ARGB→YUV → JavaI420Buffer.allocate + put →
+  VideoFrame(buffer, frame.rotation, frame.timestampNs). Rotation
+  preserved on output; landmarks computed in buffer space (rotation
+  behavior is a first-device verification point). Over-budget →
+  original frame + drops++ → bypass + module callback
+  (companion-object lambdas mirroring M1's ARCameraSession.onFrame
+  pattern).
+- **Android** `packages/android/src/main/java/com/areffects/ARFilterModule.kt`
+  (ReactContextBaseJavaModule "ARFilter", mirroring M1 module
+  pattern): registerProcessor (ProcessorProvider.addProcessor with
+  factory returning the SHARED processor instance — so module filter
+  state reaches the track's processor; consistent with
+  one-filtered-track limit), setFilter/clearFilter, events
+  onFilterFrame/onFilterBypassed via DeviceEventManagerModule.
+- **Android** `ARFaceLandmarkerPackage.kt`: add ARFilterModule to
+  createNativeModules (same registration path M1 uses — do NOT create
+  a second package class).
+- `packages/android/build.gradle`: add `implementation
+  project(':livekit-react-native-webrtc')` with comment (assumption:
+  autolinking names the project after the npm package name; fix =
+  check settings.gradle after prebuild, adjust one line if different).
+  org.webrtc classes arrive transitively via fork's api dependency.
+- `packages/ARFaceEffects.podspec`: add `s.dependency
+  'livekit-react-native-webrtc', '~> 144.1'` + `s.dependency
+  'WebRTC-SDK', '=144.7559.10'` with comments (pins must match the
+  host app's fork version; first-build resolution confirms).
+- **Config plugin: NO changes** (camera permission already covers M3;
+  no new permissions).
+
+### Example app extension (`example/App.tsx` + new `example/FilterPreviewOverlay.tsx`, NO new deps → NO lockfile change)
+
+Raw-vs-filtered preview toggle in camera mode (Off / Golden Shades /
+Warm Sunset cycling button; dots hidden while a filter preview is
+active so the filter can be judged cleanly). Preview is an
+APPROXIMATION, documented in code + example README: pipeline.
+handleFrame(provider frames) → FilterFramePlan →
+FilterPreviewOverlay renders plan.commands as RN Views (ellipse =
+borderRadius view, rect = view, line = rotated view; grade =
+full-screen tint view approximating warmth/brightness) positioned by
+normalized coords → view pixels (stretch mapping, front-camera flip).
+True pre-encode compositing happens natively on the LiveKit track —
+preview shows placement/grade intent only. M1 dots mode and M2 mock
+mode stay intact.
+
+### What M5 must supply (integration, NOT in M3)
+
+Host app: get a camera track → `adapter.applyFilter(track, effect)`
+→ publish the track as usual; forward the processor's
+`onFilterFrame` landmark events over the live socket so viewers'
+M2 anchoring can track the host's face; wire `onFilterBypassed` to
+host UI (filter temporarily off); wire `soundUri` per the app's audio
+policy (still unwired in M3, as in M2). Device proof owed at M5:
+real-phone filtered publish, FPS under filter load, LiveKit publish
+end-to-end, permission flow, first-build Gradle/CocoaPods resolution
+(incl. the fork project-name assumption + WebRTC module import +
+RTCVideoFrame init signature + I420/rotation behavior).
+
 ## Milestones
 
 - **M1 — Detection provider + example app.** MediaPipe Face Landmarker
@@ -491,10 +857,11 @@ stream subscription — per-frame updates never touch React state
   socket; viewer overlay renderer (§3) pins gift effects to streamed
   anchors; banner/stage fallback on tracking loss. This is the
   face-following-gift feature, end to end.
-- **M3 — Host-side pre-encode filters.** Custom camera capturer (§4)
-  bridged into LiveKit React Native, shipped as an Expo config plugin.
-  Filters composited before encode so all viewers see them. The hard
-  phase; gets its own device-testing pass.
+- **M3 — Host-side pre-encode filters.** Fork VideoEffect processor
+  (§4, spike-corrected: no custom capturer, no plugin change)
+  bridged into LiveKit React Native via the adapter; filters
+  composited before encode so all viewers see them. The hard phase;
+  gets its own device-testing pass (at M5, with integration).
 - **M4 — Effects catalogue + docs.** Starter data-defined filters and gift
   effects, integration guides (LiveKit setup, socket wiring, performance
   notes), and a contribution guide for effect authors.
