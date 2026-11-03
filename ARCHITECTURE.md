@@ -364,6 +364,121 @@ needs plist/entitlement/gradle changes, the plugin grows then.
   The model is loaded from the bundle/assets, never from the network
   at runtime.
 
+## M2 implementation record — viewer-side gift anchoring
+
+M2 implements the viewer half of the face-following gift: a host app
+feeds spec-§2 payload JSON into a consumer, and an overlay component
+pins a gift effect to the tracked anchor. The SDK stays
+transport-agnostic — it never imports a socket library or Tokrah code.
+The host app owns the socket and calls `consumer.handlePayload`
+(or `onFaceLost`) with whatever arrives.
+
+### Stream consumer (`landmark-stream.ts`, `anchor-tracker.ts`)
+
+- `LandmarkStreamConsumer` keeps one `AnchorTracker` per faceId and
+  exposes `getFaceState`, `getPrimaryFaceState`, `getAllFaceStates`,
+  `setPrimaryFace`, plus `onUpdate` / `onFaceLost` subscriptions.
+- Primary rule: an explicitly set primary stays selected even when
+  lost, so the gift shows that face's fallback instead of jumping to a
+  different face. Auto mode picks the first tracked face in arrival
+  order, falling back to the first known face when none is tracked.
+- `payloadFromFrame` builds a subset payload from a full `FaceFrame`
+  (host-side helper for M5 wiring): only the requested indices, never
+  fabricated points, with bounds / timestamp / faceId / map / mirrored
+  preserved.
+- Loss detection uses the VIEWER clock (`lastSeenMs` vs `Date.now`),
+  never the host `timestampMs` — the two clocks are not synchronized.
+
+### Smoothing (EMA, tunable)
+
+Raw landmarks jitter frame to frame; a gift pinned to raw points looks
+broken. Each tracker applies an exponential moving average,
+`smoothed = previous + alpha * (raw - previous)`, per landmark index
+and per bounds field. Default `alpha = 0.35`, configurable via
+`AnchorTrackerConfig.smoothingAlpha` (must be in (0, 1]).
+- Snap, don't glide: the first payload for a face snaps exactly, and a
+  payload arriving after a loss or a gap snaps too — gliding from a
+  stale position looks worse than a jump.
+- Only the latest payload's indices are kept (`latestIndices`):
+  anchor resolution trusts only indices present in the most recent
+  payload, never a stale point from an older one.
+- This is jitter filtering, not interpolation: the overlay renders the
+  latest smoothed state; it never invents positions between payloads
+  (spec §2's no-interpolation rule stands).
+
+### Coordinate mapping (`coordinate-mapping.ts`)
+
+Pipeline: sensor point (normalized 0..1, origin top-left) -> mirror
+(if the payload says `mirrored: true`, `x -> 1 - x`) -> displayed
+video rect -> view pixels. Mirroring happens BEFORE rect mapping, per
+spec §2 (hosts send raw sensor coords; viewers flip).
+- `cover`: `s = max(vw/videow, vh/videoh)` (video crops to fill).
+- `contain`: `s = min(vw/videow, vh/videoh)` (video letterboxes).
+- Offsets center the video: `ox = (vw - videow*s)/2`,
+  `oy = (vh - videoh*s)/2`; `viewX = ox + x*videow*s`,
+  `viewY = oy + y*videoh*s`. Non-positive sizes throw `RangeError`.
+- Anchor resolution: `above-head` -> top-center of bounds;
+  `on-face` / `follow` -> centroid of the requested indices present in
+  `latestIndices`, else bounds center; `orbit` -> bounds center (the
+  circular offset is applied at render); `fullscreen` -> null.
+- Asset rect: width = `scaleToFace * faceWidthPx`, height follows the
+  asset's intrinsic aspect (invalid asset size falls back to square);
+  offset in face-width units, y positive DOWN; `above-head` pins the
+  asset's bottom edge to the anchor, everything else centers on it;
+  `fullscreen` fills the view.
+
+### Fallback rule (default 1500ms)
+
+A gift falls back to banner/stage display instead of vanishing or
+freezing mid-screen when: an explicit `face.lost` payload arrives, OR
+no landmark payload has arrived for that face for more than
+`lostAfterMs` (default **1500ms**, spec §3, configurable). The mode
+comes from the effect's `trackingLostFallback`: `banner` (bottom bar),
+`stage` (centered at 50% of the smaller view dimension), or `hide`.
+The overlay's `onFallback` fires only on tracked -> fallback
+transitions, never on initial mount in fallback. Re-anchoring is
+automatic when the face returns.
+
+### Overlay (`AnchoredGiftOverlay.tsx`)
+
+Position and size live in Reanimated shared values, updated from the
+stream subscription — per-frame updates never touch React state
+(spec §3). React state is used only for tracked/fallback transitions.
+- M2 uses the effect's FIRST anchor; multi-anchor effects land later.
+  An effect with no anchors renders nothing.
+- Asset rendering: `image` assets render via RN `Image`; other kinds
+  (lottie / svga / video-alpha) render a name pill until their player
+  deps land — data-defined effects stay visible before artwork does.
+- Sound (`soundUri`) is NOT played in M2: audio policy belongs to the
+  app's gift system, not the overlay. Wiring lands with integration.
+- `orbit` adds a derived circular offset (radius 0.75x face width
+  horizontal, 0.4x vertical, 6s revolution).
+- The SDK ships TypeScript source (`main: src/index.ts`), so its
+  Reanimated worklets compile under the CONSUMER's Babel config: any
+  app using the overlay needs `react-native-reanimated/plugin` LAST
+  in its Babel plugins (see `example/babel.config.js`).
+
+### Deviations from the M1 plan (stated, not silent)
+
+- **Reanimated, not Skia, for M2.** Spec §3 allows Reanimated
+  worklets / Skia; M2 gift anchoring needs positioning, not custom
+  drawing, so Reanimated + `Image` covers it. Skia is deferred to M3,
+  where GPU filter rendering earns it. This adds
+  `react-native-reanimated` as an SDK peer dependency and as an
+  example direct dependency (4.5.1, matching the SDK-57 / RN 0.86.2
+  stack the example already targets).
+- **EMA is jitter filtering, not interpolation** (see above).
+- **Sound not wired in M2** (see above).
+
+### Step 0 proof table (M1 build-proof gate, resolved in M2)
+
+| Item | Proven in the sandbox | Still owed |
+| ---- | --------------------- | ---------- |
+| Real `tsc --strict` on SDK + example + tests | Clean under real RN 0.86.2 / reanimated 4.5.1 types (TS 5.6.3). With `skipLibCheck: false` the only errors are 6 inside reanimated/worklets `.d.ts` files (missing `Keyframe` / `WeakRef` globals — those libs assume a DOM/ES2021 lib, which RN projects exclude); zero errors in project files. Final clean run uses `skipLibCheck: true`, as default Expo projects do. | Nothing for types. |
+| Gradle + CocoaPods files | Pins verified: `tasks-vision:0.10.14` pom + aar on Google's Maven repo (`google()` first in `build.gradle`; NOT on Maven Central); CameraX 1.3.4 poms; kotlin-gradle-plugin 1.9.24 pom; `MediaPipeTasksVision` 0.10.14 on CocoaPods trunk; native/JS event + module names consistent across Swift/Kotlin/JS; `app.plugin.js` syntax-checked. | Full Gradle build, CocoaPods install/resolution, and a dev build — all need a build machine. |
+| Example lockfile | `example/yarn.lock` (yarn v1) generated and verified: 472 registry packages, all 472 tarballs hash-verified (sha512), 564 keys, 0 pattern-check misses. Entries keyed by requested range. | Install from the lockfile on a real toolchain (sandbox proxy mangles some registry metadata through package managers, so install itself was not run here). |
+| On-device behavior (M1 + M2) | Example mock mode (scripted face path + pinned gift + pause-to-fallback) lets anchoring be judged without a phone. | Real-phone pass: dev build, permission flow, dots + anchored gift tracking front/back cameras, fallback behavior on real loss, FPS with the overlay rendering. |
+
 ## Milestones
 
 - **M1 — Detection provider + example app.** MediaPipe Face Landmarker
