@@ -32,7 +32,7 @@ per-user bill.
 
 ## Status
 
-**M1 + M2 landed, M3 built to PR (this branch).** The repository now contains:
+**M1 + M2 + M3 landed, M4 built to PR (this branch).** The repository now contains:
 
 - `packages/src/` — the `DetectionProvider` interface, core types, the
   MediaPipe JS wrapper (`mediapipe-provider.ts`), the `ARCameraView`
@@ -41,6 +41,12 @@ per-user bill.
   coordinate mapping (mirror + cover/contain), and the
   `AnchoredGiftOverlay` component (Reanimated shared values, no
   React re-render per frame).
+- `packages/src/` (M4 additions) — effects catalogue + validation:
+  `catalogue.ts` (16 data-defined effects: 13 filters + 3 gifts),
+  `catalogue-assets.ts` (self-contained 128×128 PNG gift artwork as
+  data URIs), `effect-validation.ts` (schema validator — fails loud
+  at load, never silently at render), and tests for validation +
+  catalogue integrity. No new dependencies.
 - `packages/src/` (M3 additions) — host-side pre-encode filters:
   `HostFilterPipeline` + filter renderer (data-defined shapes +
   grade, sensor-space geometry) + performance governor (drop /
@@ -63,10 +69,13 @@ per-user bill.
   NO plugin change.
 - `example/` — Expo app: native preview + live landmark dots + face
   count + FPS, plus an M2 mock mode (scripted face path with a gift
-  pinned to it, no camera needed), plus an M3 filter preview toggle
-  (Off / Golden Shades / Warm Sunset over the camera preview — an
-  approximation of intent, not the encoded output) and a committed
-  `yarn.lock` (unchanged by M3: no new dependencies).
+  pinned to it, no camera needed), plus an M4 effect picker: camera mode browses the catalogue
+  filters and applies the chosen filter to the preview pipeline
+  (replacing M3's cycle-through button), mock mode browses the
+  catalogue gifts and switches the pinned gift (replacing M3's
+  hardcoded mock gift). The filter preview remains an approximation
+  of intent, not the encoded output. `yarn.lock` is unchanged by M4:
+  no new dependencies.
   Pure-TS unit tests for the M2 stack live in
   `packages/src/__tests__/` (37 tests: serialization, mapping,
   smoothing, fallback); M3 adds tests for the renderer, governor,
@@ -82,8 +91,10 @@ moves, fallback shows on real tracking loss, FPS holds near the 15fps
 throttle with the overlay rendering, and the camera toggle switches
 cleanly. M3 additionally owes, at M5: a real-phone filtered LiveKit
 publish (viewers see the filter), FPS under filter load, and the
-first-build Gradle/CocoaPods resolution of the fork wiring. Do not
-ship this to users until that pass is green.
+first-build Gradle/CocoaPods resolution of the fork wiring. M4
+additionally owes: real-phone catalogue browsing, filter preview
+and gift preview from the picker, and FPS with catalogue effects
+applied. Do not ship this to users until that pass is green.
 
 ## Roadmap
 
@@ -105,6 +116,11 @@ ship this to users until that pass is green.
 - **M5 — npm publish.** `react-native-ar-effects` on npm, versioned releases.
 
 See `ARCHITECTURE.md` for the full spec and `CONTRIBUTING.md` to help.
+Docs: `docs/API.md` (providers, anchor tracker, overlay, filter
+pipeline, LiveKit adapter, catalogue/validation), `docs/EFFECT_AUTHORING.md`
+(how a third party defines an effect in data, with a worked example),
+`docs/INTEGRATION.md` (install, config plugin, provider setup, host
+filters, viewer anchoring).
 
 ## License
 

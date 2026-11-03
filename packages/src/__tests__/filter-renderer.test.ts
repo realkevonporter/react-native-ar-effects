@@ -46,6 +46,9 @@ function baseEffect(
     id: "test-filter",
     kind: "filter",
     name: "Test Filter",
+    formatVersion: 1,
+    version: 1,
+    tags: ["test"],
     renderPath: "pre-encode",
     animation: { mode: "loop" },
     anchors: [
