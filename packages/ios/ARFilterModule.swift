@@ -65,7 +65,12 @@ final class ARFilter: RCTEventEmitter {
       return
     }
     let selector = NSSelectorFromString("addProcessor:forName:")
-    let provider = providerClass as NSObjectProtocol
+    // NB: providerClass is a Class object (AnyClass), not an instance.
+    // It cannot be cast to NSObjectProtocol (the instance protocol) —
+    // Xcode rejects that coercion. AnyObject keeps ObjC message
+    // dispatch: responds(to:) + perform deliver addProcessor:forName:
+    // to the class object.
+    let provider: AnyObject = providerClass
     guard provider.responds(to: selector) else {
       reject(
         "E_NO_PROCESSOR_PROVIDER",
@@ -75,7 +80,7 @@ final class ARFilter: RCTEventEmitter {
       )
       return
     }
-    provider.perform(
+    _ = provider.perform(
       selector,
       with: ARFilterProcessor.shared,
       with: ARFilterProcessor.processorName
