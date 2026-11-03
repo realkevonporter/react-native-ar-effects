@@ -1,5 +1,12 @@
 {
   "description": "Open-source face tracking + AR effects for React Native live video: face-following gift anchors and host-side filters for LiveKit-based streaming.",
+  "devDependencies": {
+    "@types/react": "19.2.3",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-reanimated": "4.5.1",
+    "typescript": "5.6.3"
+  },
   "keywords": [
     "react-native",
     "face-tracking",
@@ -10,13 +17,18 @@
     "filters"
   ],
   "license": "Apache-2.0",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "name": "react-native-ar-effects",
   "peerDependencies": {
     "react": "*",
     "react-native": "*",
     "react-native-reanimated": "*"
   },
-  "types": "src/index.ts",
+  "react-native": "src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "types": "dist/index.d.ts",
   "version": "0.1.0"
 }

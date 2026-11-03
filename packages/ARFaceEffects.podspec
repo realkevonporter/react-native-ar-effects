@@ -4,7 +4,7 @@ Pod::Spec.new do |s|
   s.summary          = "Open-source face tracking + AR effects for React Native live video"
   s.description      = "MediaPipe Face Landmarker behind one DetectionProvider interface, with a camera preview view for live landmark overlays, plus host-side pre-encode filters that plug into LiveKit's video-effect pipeline."
   s.homepage         = "https://github.com/realkevonporter/react-native-ar-effects"
-  s.license          = { :type => "Apache-2.0", :file => "../LICENSE" }
+  s.license          = { :type => "Apache-2.0", :file => "LICENSE" }
   s.author           = "Kevon Porter"
   s.platforms        = { :ios => "13.0" }
   s.source           = { :git => "https://github.com/realkevonporter/react-native-ar-effects.git", :tag => s.version.to_s }
