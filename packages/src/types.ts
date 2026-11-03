@@ -179,3 +179,59 @@ export interface EffectDefinition {
   /** What to do when face tracking is lost (gifts). */
   trackingLostFallback: "banner" | "stage" | "hide";
 }
+
+/**
+ * Viewer-side anchor state for one face (M2, ARCHITECTURE.md §2–§3).
+ * Produced by LandmarkStreamConsumer from LandmarkPayloads. All
+ * coordinates are normalized 0..1 sensor space (mirroring is applied
+ * later, at view mapping — never here).
+ */
+export interface FaceAnchorState {
+  faceId: string;
+  /** Smoothed landmarks, keyed by landmark index (sensor space). */
+  landmarks: Record<number, NormalizedPoint>;
+  /** Indices present in the most recent payload for this face. Anchor
+      resolution only trusts these — a requested index absent from the
+      latest payload is treated as missing, never as a stale point. */
+  latestIndices: number[];
+  /** Smoothed face bounds, normalized sensor space. */
+  bounds: FaceBounds;
+  /** Viewer-clock ms of the most recent payload for this face. Loss
+      detection uses the viewer clock, not the host timestampMs — the
+      two clocks are not synchronized. */
+  lastSeenMs: number;
+  /** 'tracked' while payloads arrive; 'lost' after face.lost or a gap
+      longer than lostAfterMs. */
+  status: "tracked" | "lost";
+  /** Mirroring flag from the most recent payload (spec §2). */
+  mirrored: boolean;
+  landmarkMap: LandmarkMap;
+}
+
+/** Tuning for one face's anchor tracker (M2). */
+export interface AnchorTrackerConfig {
+  /**
+   * EMA weight for new samples, (0,1]. Default 0.35: at the 15fps
+   * stream rate this settles in ~5 frames while visibly damping
+   * per-frame jitter. Higher = more responsive, less smooth.
+   */
+  smoothingAlpha?: number;
+  /**
+   * Gap after which a face counts as lost. Default 1500ms (spec §3:
+   * "no landmark payload has arrived for > 1.5s").
+   */
+  lostAfterMs?: number;
+}
+
+/** Tuning for LandmarkStreamConsumer (M2). */
+export interface LandmarkStreamConsumerConfig {
+  lostAfterMs?: number;
+  smoothingAlpha?: number;
+  /**
+   * Explicit primary face. Null (default) = first tracked face, in
+   * arrival order. An explicit primary stays selected even when lost
+   * (the overlay shows its fallback) — the gift must not jump to a
+   * different face just because the host's face dropped.
+   */
+  primaryFaceId?: string | null;
+}
