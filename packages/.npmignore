@@ -1,0 +1,9 @@
+# Publish story (M5): this file is the SINGLE publish-exclusion mechanism.
+# There is no "files" field in package.json, so the two can never conflict.
+# npm publish runs from packages/, so the repo-root example/, docs/, and
+# root README never enter the tarball in the first place. Inside packages/,
+# everything ships except the unit tests below — including dist/ (built
+# fresh by `npm run build` / prepublishOnly), src/ (the "react-native"
+# field points Metro at src/index.ts, so RN apps keep bundling TS source
+# exactly as before), ios/, android/, app.plugin.js, and the podspec.
+src/__tests__/

@@ -17,6 +17,168 @@ It is built to integrate with **LiveKit-based live streaming** (the
 effects layers are transport-agnostic: any live socket can carry landmarks,
 and any video pipeline can consume the pre-encode compositor.
 
+## Install
+
+```sh
+npm install react-native-ar-effects
+```
+
+Peer dependencies (from `packages/package.json`, declared with `"*"` — use
+the versions your app already runs; the example app runs react 19.2.3,
+react-native 0.86.2, react-native-reanimated 4.5.1):
+
+- `react`
+- `react-native`
+- `react-native-reanimated` — the viewer overlay positions gifts with
+  Reanimated shared values (no React re-render per frame). If your app
+  does not have it yet, `npm install react-native-reanimated`, and keep
+  `react-native-reanimated/plugin` last in your Babel plugin list (see
+  `example/babel.config.js`).
+
+### Config plugin (Expo)
+
+Add the package to your app config. The plugin does one thing — camera
+permission. iOS gets `NSCameraUsageDescription`; Android gets the `CAMERA`
+permission. Autolinking wires the podspec / Gradle module; the plugin
+adds no other native wiring.
+
+```json
+// app.json
+{
+  "expo": {
+    "plugins": ["react-native-ar-effects"]
+  }
+}
+```
+
+With a custom permission message:
+
+```json
+// app.json
+{
+  "expo": {
+    "plugins": [
+      [
+        "react-native-ar-effects",
+        {
+          "cameraPermissionText": "We need the camera to track your face."
+        }
+      ]
+    ]
+  }
+}
+```
+
+Camera permission note: the native modules need a dev build
+(`expo prebuild` + run) — they do not run in Expo Go, and the camera
+permission prompt must be granted before the provider starts. If you are
+not on Expo, add the same two permission entries manually and let
+autolinking wire the native modules.
+
+### Minimal usage
+
+Host — start the provider and show its preview (the provider owns the
+camera session, so preview through `<ARCameraView />`, never a second
+camera component):
+
+```tsx
+import { ARCameraView, mediaPipeProvider } from "react-native-ar-effects";
+import { useEffect } from "react";
+import { StyleSheet } from "react-native";
+
+function HostCamera() {
+  useEffect(() => {
+    let offFrame: () => void = () => {};
+    let offLost: () => void = () => {};
+    mediaPipeProvider
+      .start({ cameraPosition: "front", maxFps: 15, maxFaces: 1 })
+      .then(() => {
+        offFrame = mediaPipeProvider.onFrame((frame) => {
+          // Forward payloadFromFrame(frame, indices, mirrored) to viewers.
+        });
+        offLost = mediaPipeProvider.onFaceLost(({ faceId }) => {
+          // Clear local face state.
+        });
+      });
+    return () => {
+      offFrame();
+      offLost();
+      void mediaPipeProvider.stop();
+    };
+  }, []);
+
+  return <ARCameraView style={StyleSheet.absoluteFill} />;
+}
+```
+
+Viewer — pin a gift to the tracked face (`viewSize` comes from the video
+view's `onLayout`; `liveSocket` is your app's socket):
+
+```tsx
+import {
+  AnchoredGiftOverlay,
+  GOLDEN_ORB_GIFT,
+  LandmarkStreamConsumer,
+} from "react-native-ar-effects";
+
+const consumer = useMemo(() => new LandmarkStreamConsumer(), []);
+useEffect(() => liveSocket.on("face", (p) => consumer.handlePayload(p)), []);
+
+<AnchoredGiftOverlay
+  consumer={consumer}
+  effect={GOLDEN_ORB_GIFT}
+  videoSize={{ width: 720, height: 1280 }}
+  viewSize={viewSize}
+  resizeMode="cover"
+/>;
+```
+
+Host — apply a pre-encode filter (viewers see it in the encoded video,
+not as a preview-only overlay):
+
+```ts
+import {
+  CAT_EARS,
+  LiveKitFilterAdapter,
+  NativeFilterBridge,
+} from "react-native-ar-effects";
+
+const adapter = new LiveKitFilterAdapter(new NativeFilterBridge());
+// After the local camera track is published:
+if (adapter.isFilterable(localVideoTrack)) {
+  await adapter.applyFilter(localVideoTrack, CAT_EARS);
+  await adapter.clearFilter(localVideoTrack);
+}
+```
+
+Host filters need the LiveKit React Native fork's video-effect track
+(`@livekit/react-native-webrtc` 144.x — stock WebRTC has no
+`_setVideoEffects`); otherwise `applyFilter` throws
+`FilterNotSupportedError`. Full guides: `docs/INTEGRATION.md`.
+
+### What ships (M5 publish story)
+
+- `dist/` — compiled JS + TypeScript declarations, built by
+  `npm run build` (`tsc`, strict). `main` points at `dist/index.js` and
+  `types` at `dist/index.d.ts`, so Node, bundlers, and TypeScript
+  consumers resolve compiled output. Source-ship alone was rejected:
+  a `.ts` entry point is not resolvable by plain Node/bundler tooling,
+  and it would force every consumer to compile the library under their
+  own `tsconfig`.
+- `src/` — also ships, because the `react-native` field points Metro at
+  `src/index.ts`: React Native apps keep bundling TS source under the
+  consumer's Babel config (which is what compiles the Reanimated
+  worklets), exactly as the example app does today. No behavior change
+  for RN consumers.
+- Native code and the config plugin ship too: `ios/`, `android/`,
+  `app.plugin.js`, `ARFaceEffects.podspec`.
+- Publish exclusions live in exactly one place, `packages/.npmignore`
+  (unit tests only) — there is no `files` field to conflict with it.
+  Publishing runs from `packages/`, so `example/` and `docs/` never
+  enter the tarball. `dist/` is built fresh at publish time
+  (`prepublishOnly` / the publish workflow) and is never committed.
+- Version stays `0.1.0`: pre-1.0 honestly signals the API may change.
+
 ## Why open-source
 
 Commercial face-AR SDKs (Banuba, DeepAR, and friends) do this job well — and
@@ -113,7 +275,7 @@ applied. Do not ship this to users until that pass is green.
   publishing is proven at M5.
 - **M4 — Effects catalogue + docs.** A starter set of data-defined filters
   and gift effects, plus integration guides.
-- **M5 — npm publish.** `react-native-ar-effects` on npm, versioned releases.
+- **M5 — npm publish prep (this PR) + publish.** Publish prep (dist build, manual publish workflow, install docs) lands here; the actual publish waits on an npm credential — see the PR body. Version stays 0.1.0.
 
 See `ARCHITECTURE.md` for the full spec and `CONTRIBUTING.md` to help.
 Docs: `docs/API.md` (providers, anchor tracker, overlay, filter
