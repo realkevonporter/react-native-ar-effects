@@ -25,6 +25,10 @@
     "react-native-reanimated": "*"
   },
   "react-native": "src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/realkevonporter/react-native-ar-effects.git"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "npm run build"
