@@ -1,21 +1,21 @@
 # Publish react-native-ar-effects to npm — MANUAL DISPATCH ONLY.
 #
 # This workflow NEVER runs on push or on pull requests: it is
-# workflow_dispatch-only, so merging the M5 publish-prep PR publishes
-# nothing by itself.
+# workflow_dispatch-only, so merging a PR publishes nothing by itself.
 #
-# It is also inert until a secret exists: the publish step authenticates
-# with NODE_AUTH_TOKEN from the repository secret NPM_TOKEN. With no
-# secret configured, the publish step fails at auth and nothing is
-# published. Creating that secret is a human step in the repo settings
-# (see the M5 PR body) — no token value lives in this repo.
+# Authentication is npm trusted publishing (OIDC) — no stored token.
+# The trusted publisher is bound on npmjs to owner realkevonporter,
+# repo react-native-ar-effects, workflow publish.yml. The publish steps
+# must NOT set NODE_AUTH_TOKEN: when it is set, npm uses it instead of
+# the OIDC token and trusted publishing is bypassed.
 #
 # What it does, in order: check out, set up Node with the npm registry,
-# install (devDependencies carry the TypeScript compiler and the peer
-# type declarations the build needs), build dist/ from packages/src,
-# verify the dist entry points exist, show the would-be tarball
-# contents with `npm pack --dry-run`, then publish — or, with the
-# dry-run input, stop at `npm publish --dry-run` instead.
+# ensure npm supports trusted publishing, install (devDependencies carry
+# the TypeScript compiler and the peer type declarations the build
+# needs), build dist/ from packages/src, verify the dist entry points
+# exist, show the would-be tarball contents with `npm pack --dry-run`,
+# then publish — or, with the dry-run input, stop at
+# `npm publish --dry-run` instead.
 name: Publish to npm
 
 on:
@@ -29,6 +29,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -42,6 +43,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
       - name: Install dependencies
         run: npm install
       - name: Build dist/
@@ -53,10 +56,6 @@ jobs:
       - name: Publish (dry run)
         if: ${{ inputs.dry-run }}
         run: npm publish --dry-run
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish
         if: ${{ !inputs.dry-run }}
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
