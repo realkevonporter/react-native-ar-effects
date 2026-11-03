@@ -7,13 +7,21 @@
  * renderer (§3) pins effects to anchors, and effects (§5) are data.
  *
  * Scaffold status: types + interface only. No native code yet (M1).
+ *
+ * M1 status: the MediaPipe provider implementation lives in
+ * mediapipe-provider.ts (JS wrapper) plus the native modules under
+ * packages/ios and packages/android. The interface gained two M1
+ * additions, both documented here: FaceTrackingConfig.cameraPosition
+ * (the provider owns the camera session) and
+ * DetectionProvider.onFaceLost (face-loss is explicit, matching the
+ * face.lost socket payload in §2).
  */
 
 /** Which face-detection engine produced a frame. */
-export type DetectionProviderKind = 'mediapipe' | 'mlkit' | 'vision';
+export type DetectionProviderKind = "mediapipe" | "mlkit" | "vision";
 
 /** Which landmark map a set of indices refers to. */
-export type LandmarkMap = 'mediapipe-478' | 'mlkit' | 'vision';
+export type LandmarkMap = "mediapipe-478" | "mlkit" | "vision";
 
 /** A point in normalized 0..1 frame space (origin top-left). */
 export interface NormalizedPoint {
@@ -60,14 +68,14 @@ export interface FaceFrame {
  * only the indices the active effects anchor to — never the full mesh.
  */
 export interface LandmarkPayload {
-  type: 'face.landmarks';
+  type: "face.landmarks";
   faceId: string;
   /** Sparse subset: { index } refers to `landmarkMap` numbering. */
   landmarks: Array<{ index: number; x: number; y: number }>;
   bounds: FaceBounds;
   timestampMs: number;
   /** Always 'normalized-top-left'. Consumers must honor it. */
-  coordinateSpace: 'normalized-top-left';
+  coordinateSpace: "normalized-top-left";
   /**
    * Front-camera mirroring rule: when true, the host sent raw sensor-space
    * coordinates and VIEWERS must flip x -> 1 - x before rendering.
@@ -79,7 +87,7 @@ export interface LandmarkPayload {
 
 /** Sent when a provider loses a face; viewers fall back (banner/stage). */
 export interface FaceLostPayload {
-  type: 'face.lost';
+  type: "face.lost";
   faceId: string;
   timestampMs: number;
 }
@@ -92,6 +100,13 @@ export interface FaceTrackingConfig {
   maxFaces?: number;
   /** Minimum detection confidence, 0..1. */
   minDetectionConfidence?: number;
+  /**
+   * Which camera the provider opens. The provider owns the camera session
+   * (see ARCHITECTURE.md §1), so the app picks the camera here instead
+   * of running its own preview camera — two sessions on one camera
+   * hardware conflict. Front is the default (selfie / host camera).
+   */
+  cameraPosition?: "front" | "back";
 }
 
 /**
@@ -110,6 +125,14 @@ export interface DetectionProvider {
   stop(): Promise<void>;
   /** Subscribe to per-frame results; returns an unsubscribe function. */
   onFrame(callback: (frame: FaceFrame) => void): () => void;
+  /**
+   * Subscribe to face-loss events. Fires when a face the provider was
+   * tracking disappears from processed frames — the same moment the host
+   * would send a face.lost payload over the live socket (§2). The M2
+   * overlay renderer uses this to trigger its banner/stage fallback.
+   * Returns an unsubscribe function.
+   */
+  onFaceLost(callback: (payload: FaceLostPayload) => void): () => void;
 }
 
 /**
@@ -120,7 +143,7 @@ export interface EffectAnchor {
   /** Landmark indices this effect pins to (MediaPipe-478 numbering). */
   landmarkIndices: number[];
   /** How the asset sits on the anchors. */
-  placement: 'above-head' | 'on-face' | 'follow' | 'orbit' | 'fullscreen';
+  placement: "above-head" | "on-face" | "follow" | "orbit" | "fullscreen";
   /** Scale relative to face bounds width (1.0 = as wide as the face). */
   scaleToFace: number;
   /** Offset in face-width units, applied after anchoring. */
@@ -130,7 +153,7 @@ export interface EffectAnchor {
 /** One renderable asset inside an effect (Lottie, SVGA, image, video-alpha). */
 export interface EffectAsset {
   uri: string;
-  kind: 'lottie' | 'svga' | 'image' | 'video-alpha';
+  kind: "lottie" | "svga" | "image" | "video-alpha";
   /** Intrinsic asset size, used for scaling to the anchor. */
   width: number;
   height: number;
@@ -142,17 +165,17 @@ export interface EffectAsset {
  */
 export interface EffectDefinition {
   id: string;
-  kind: 'filter' | 'gift';
+  kind: "filter" | "gift";
   name: string;
   /** Viewer overlay (gifts) or pre-encode (filters). */
-  renderPath: 'viewer-overlay' | 'pre-encode';
+  renderPath: "viewer-overlay" | "pre-encode";
   anchors: EffectAnchor[];
   assets: EffectAsset[];
   /** Loop, one-shot, or timed (ms). Gifts are usually one-shot. */
-  animation: { mode: 'loop' | 'once' | 'timed'; durationMs?: number };
+  animation: { mode: "loop" | "once" | "timed"; durationMs?: number };
   /** Sound on the viewing device (gifts) or host preview (filters).
       Never baked into the encoded video. */
   soundUri?: string;
   /** What to do when face tracking is lost (gifts). */
-  trackingLostFallback: 'banner' | 'stage' | 'hide';
+  trackingLostFallback: "banner" | "stage" | "hide";
 }
