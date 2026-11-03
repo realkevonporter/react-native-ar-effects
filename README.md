@@ -32,23 +32,37 @@ per-user bill.
 
 ## Status
 
-**Early scaffold.** This repository currently contains:
+**M1 landed (this branch).** The repository now contains:
 
-- `ARCHITECTURE.md` — the full design spec (providers, landmark-stream
-  format, overlay renderer, pre-encode compositing, effects format,
-  milestones).
-- `packages/` — the package skeleton: core TypeScript types and the
-  `DetectionProvider` interface. **No native code yet** — detection
-  provider implementations land in M1.
+- `packages/src/` — the `DetectionProvider` interface, core types, the
+  MediaPipe JS wrapper (`mediapipe-provider.ts`), and the
+  `ARCameraView` preview component.
+- `packages/ios/` — Swift native module (MediaPipe Face Landmarker,
+  VIDEO mode, CPU delegate) + shared camera session + preview view,
+  with the `face_landmarker.task` model vendored as a pod resource.
+- `packages/android/` — Kotlin native module (MediaPipe Face
+  Landmarker via CameraX) + shared camera session + preview view,
+  with the model vendored as an asset.
+- `packages/app.plugin.js` — minimal Expo config plugin (camera
+  permission only; autolinking handles the native wiring).
+- `example/` — Expo app: native preview + live landmark dots + face
+  count + FPS. Ships without a committed lockfile for M1 (see
+  `example/README.md` for why).
 
-Nothing here is production-ready yet. Do not ship this to users until M1
-lands and the example app shows live landmarks on a real phone.
+**On-device verification is owed and is NOT claimed by M1.** The
+sandbox has no phone and no iOS/Android build environment, so the
+native code is uncompiled and untested on hardware. The first human
+device pass must confirm: dev build installs, camera permission flow,
+dots track the face on front and back cameras, FPS holds near the
+15fps throttle, and the camera toggle switches cleanly. Do not ship
+this to users until that pass is green.
 
 ## Roadmap
 
-- **M1 — Detection providers + example app.** MediaPipe Face Landmarker as
-  the primary provider, ML Kit as fallback, Apple Vision on iOS, behind one
-  `DetectionProvider` interface. Example app shows live landmarks.
+- **M1 — Detection provider + example app.** MediaPipe Face Landmarker
+  implemented (the single primary provider for M1); ML Kit and Apple
+  Vision remain specified fallbacks for later milestones. Example app
+  shows live landmarks. See the spike record in `ARCHITECTURE.md`.
 - **M2 — Viewer-side gift anchoring.** Landmark stream over the live socket;
   viewers pin gift overlays to streamed anchors, with fallback to
   banner/stage when tracking is lost.

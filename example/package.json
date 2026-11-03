@@ -1,0 +1,18 @@
+{
+  "dependencies": {
+    "expo": "~57.0.11",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-ar-effects": "file:../packages"
+  },
+  "main": "node_modules/expo/AppEntry.js",
+  "name": "ar-effects-example",
+  "private": true,
+  "scripts": {
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild",
+    "start": "expo start"
+  },
+  "version": "0.1.0"
+}

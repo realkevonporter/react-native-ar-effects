@@ -279,12 +279,99 @@ animator work or licensed assets — the SDK plays them, it does not draw
 them. The starter catalogue (M4) ships a small set of data-defined effects
 to prove the format; the community can add more without touching SDK code.
 
+## M1 spike record — provider decision
+
+M1 implements exactly one provider: **MediaPipe Face Landmarker via
+custom native modules** (Swift on iOS, Kotlin on Android), CPU
+delegate, VIDEO running mode, bundled `face_landmarker.task` model.
+This section records why, and what was rejected, so a later milestone
+does not relitigate it without new evidence.
+
+### Why MediaPipe
+
+- **One API + one model across iOS and Android.** The same Tasks
+  Vision API shape and the same `.task` file serve both platforms, so
+  the provider interface stays honest: one implementation, two
+  platforms, identical output.
+- **License matches the repo.** MediaPipe itself is Apache 2.0, and
+  the `face_landmarker.task` model ships under the same terms. Nothing
+  in M1's detection path introduces a non-Apache license.
+- **Dense mesh + blendshapes serve both halves.** The 478-point mesh
+  and 52 blendshape scores anchor gifts today and can drive face masks
+  in M3. A sparse-point engine would force a second detector for
+  filters later.
+- **Native, not web.** The native Tasks libraries (CocoaPods
+  `MediaPipeTasksVision`, Maven `com.google.mediapipe:tasks-vision`)
+  run on-device with no JS runtime dependency.
+
+### What was rejected for M1
+
+- **Google ML Kit face detection** — free SDK, but under Google's own
+  terms, not Apache 2.0 (license distinction, recorded here). It also
+  returns sparse landmarks/contours only, no dense mesh, so it cannot
+  carry M3 filters. Kept as a future fallback for low-end devices
+  where MediaPipe is too heavy.
+- **Apple Vision** (`VNDetectFaceLandmarksRequest`) — excellent and
+  zero-dependency, but iOS-only. M1 needs one cross-platform provider;
+  a Vision primary would force a second Android provider in the same
+  milestone. Kept as a future iOS zero-dependency option.
+- **MediaPipe JS/WASM in React Native** — rejected outright. The
+  `@mediapipe/tasks-vision` JS build is web-targeted: it needs
+  WebAssembly and DOM-adjacent APIs that Hermes does not provide.
+  There is no credible WASM-in-Hermes path for this; the native Tasks
+  libraries are the only viable React Native route.
+
+### Camera ownership (M1 design decision)
+
+The §1 interface says `start()` resolves "when the camera + engine
+are ready" — the provider owns the camera session. That is deliberate:
+camera hardware is exclusive, so a second preview camera (e.g.
+expo-camera) would fight the provider's session. The SDK therefore
+exposes `ARCameraView`, a native preview view bound to the shared
+provider session, and the example app previews through it. The native
+session runs portrait-oriented; the preview layer mirrors the front
+camera while sensor frames are not mirrored, so front-camera
+consumers flip x -> 1 - x — the same rule §2 assigns to viewers.
+
+### Config plugin (M1)
+
+The library ships a minimal Expo config plugin that adds ONLY the
+camera permission (NSCameraUsageDescription + Android CAMERA). No
+native-dep wiring is needed from a plugin: autolinking picks up the
+podspec (iOS) and the Gradle module (Android). If a future provider
+needs plist/entitlement/gradle changes, the plugin grows then.
+
+### Interface changes in M1
+
+- `FaceTrackingConfig.cameraPosition` (`'front' | 'back'`) — the app
+  picks the camera through the provider, since the provider owns the
+  session.
+- `DetectionProvider.onFaceLost` — fires when a tracked face stops
+  appearing, mirroring the `face.lost` socket payload. Native face IDs
+  are stabilized by bounds-centroid matching (MediaPipe exposes no
+  tracking ID in VIDEO mode); the JS wrapper diffs ID sets.
+
+### Version pins and model vendoring
+
+- iOS: `MediaPipeTasksVision ~> 0.10.14` (CocoaPods existence
+  confirmed via trunk). Android: `com.google.mediapipe:tasks-vision`
+  0.10.14 (same release line; Gradle resolution is confirmed at first
+  build — the sandbox cannot reach Maven Central reliably).
+  CameraX 1.3.4 (core/camera2/lifecycle/view).
+- `face_landmarker.task` (float16/1, 3,758,596 bytes, sha256
+  `64184e22…0bc9ff`) is vendored twice — iOS pod resource and Android
+  asset — because the two build systems consume resources differently.
+  The model is loaded from the bundle/assets, never from the network
+  at runtime.
+
 ## Milestones
 
-- **M1 — Detection providers + example app.** MediaPipe Face Landmarker
-  (primary), ML Kit (fallback), Apple Vision (iOS), behind the §1
-  interface. Example app shows live landmarks on a real phone. No socket,
-  no filters yet — prove detection works on-device first.
+- **M1 — Detection provider + example app.** MediaPipe Face Landmarker
+  implemented (the single primary provider for M1); ML Kit and Apple
+  Vision remain specified fallbacks for later milestones. Example app
+  shows live landmarks on a real phone. No socket, no filters yet —
+  prove detection works on-device first. On-device verification is
+  owed (see README).
 - **M2 — Viewer-side gift anchoring.** Landmark stream (§2) over the live
   socket; viewer overlay renderer (§3) pins gift effects to streamed
   anchors; banner/stage fallback on tracking loss. This is the

@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "android": {
+      "package": "com.areffects.example"
+    },
+    "ios": {
+      "bundleIdentifier": "com.areffects.example"
+    },
+    "name": "AR Effects Example",
+    "orientation": "portrait",
+    "plugins": ["react-native-ar-effects"],
+    "scheme": "ar-effects-example",
+    "slug": "ar-effects-example",
+    "version": "0.1.0"
+  }
+}
