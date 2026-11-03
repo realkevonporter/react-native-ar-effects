@@ -19,6 +19,14 @@
  * phone. Mock mode never starts the provider. Pause stops the payload
  * stream so the 1.5s fallback banner demonstrates; Resume re-anchors.
  *
+ * M3 adds a filter preview ("Filter" button, camera mode only): the
+ * provider's frames also feed a HostFilterPipeline, and
+ * FilterPreviewOverlay renders the plan over the preview. Dots hide
+ * while a filter is active so the filter can be judged cleanly. The
+ * preview is an APPROXIMATION (see FilterPreviewOverlay) — true
+ * pre-encode compositing happens natively on a LiveKit track, which
+ * this example does not publish.
+ *
  * Requires a dev build (native modules do not run in Expo Go):
  *   npm install
  *   npx expo prebuild
@@ -37,14 +45,19 @@ import {
 import {
   AnchoredGiftOverlay,
   ARCameraView,
+  GOLDEN_SHADES,
+  HostFilterPipeline,
   LandmarkStreamConsumer,
   mediaPipeProvider,
+  WARM_SUNSET,
 } from "react-native-ar-effects";
 import type {
   EffectDefinition,
   FaceFrame,
+  FilterFramePlan,
   LandmarkPayload,
 } from "react-native-ar-effects";
+import { FilterPreviewOverlay } from "./FilterPreviewOverlay";
 
 /** Well-known MediaPipe-478 anchor indices (nose, forehead, chin,
  *  eye corners, mouth corners) plus a sampled subset so the mesh
@@ -118,6 +131,14 @@ function mockPayload(nowMs: number): LandmarkPayload {
   };
 }
 
+/** M3 sample filters cycled by the Filter button (index 0 = off). */
+const FILTERS: Array<EffectDefinition | null> = [
+  null,
+  GOLDEN_SHADES,
+  WARM_SUNSET,
+];
+const FILTER_LABELS = ["Off", "Shades", "Sunset"];
+
 export default function App(): React.JSX.Element {
   const [supported, setSupported] = useState<boolean | null>(null);
   const [started, setStarted] = useState(false);
@@ -131,6 +152,11 @@ export default function App(): React.JSX.Element {
   const [mockPaused, setMockPaused] = useState(false);
   const [mockViewSize, setMockViewSize] = useState({ width: 0, height: 0 });
   const [mockConsumer] = useState(() => new LandmarkStreamConsumer());
+  const [filterIndex, setFilterIndex] = useState(0);
+  const [filterPlan, setFilterPlan] = useState<FilterFramePlan | null>(null);
+  const [cameraViewSize, setCameraViewSize] = useState({ width: 0, height: 0 });
+  const [filterPipeline] = useState(() => new HostFilterPipeline());
+  const filterIndexRef = useRef(0);
   const eventTimestamps = useRef<number[]>([]);
   const cleanupRef = useRef<(() => void) | null>(null);
   const startedRef = useRef(false);
@@ -154,28 +180,52 @@ export default function App(): React.JSX.Element {
     };
   }, []);
 
-  const handleFrame = useCallback((frame: FaceFrame) => {
-    // FPS from a rolling 1-second window of frame events.
-    const now = Date.now();
-    const recent = eventTimestamps.current.filter(
-      (timestamp) => now - timestamp < 1000,
-    );
-    recent.push(now);
-    eventTimestamps.current = recent;
-    setFps(recent.length);
-    setFaces((previous) => {
-      // Replace only this face's entry so multi-face frames stay stable.
-      const next = previous.filter((item) => item.faceId !== frame.faceId);
-      next.push(frame);
-      return next;
-    });
-  }, []);
+  const handleFrame = useCallback(
+    (frame: FaceFrame) => {
+      // FPS from a rolling 1-second window of frame events.
+      const now = Date.now();
+      const recent = eventTimestamps.current.filter(
+        (timestamp) => now - timestamp < 1000,
+      );
+      recent.push(now);
+      eventTimestamps.current = recent;
+      setFps(recent.length);
+      setFaces((previous) => {
+        // Replace only this face's entry so multi-face frames stay stable.
+        const next = previous.filter((item) => item.faceId !== frame.faceId);
+        next.push(frame);
+        return next;
+      });
+      // M3 preview: feed the same frame through the filter pipeline
+      // when a filter is active (no measured duration on this path —
+      // the governor only gates the native track path).
+      if (filterIndexRef.current !== 0) {
+        setFilterPlan(filterPipeline.handleFrame(frame));
+      }
+    },
+    [filterPipeline],
+  );
 
-  const handleFaceLost = useCallback((payload: { faceId: string }) => {
-    setFaces((previous) =>
-      previous.filter((face) => face.faceId !== payload.faceId),
-    );
-  }, []);
+  const handleFaceLost = useCallback(
+    (payload: { faceId: string }) => {
+      setFaces((previous) =>
+        previous.filter((face) => face.faceId !== payload.faceId),
+      );
+      // M3 preview: explicit loss hides shapes (grade still applies).
+      filterPipeline.handleFaceLost(payload.faceId);
+    },
+    [filterPipeline],
+  );
+
+  const cycleFilter = useCallback(() => {
+    const next = (filterIndexRef.current + 1) % FILTERS.length;
+    filterIndexRef.current = next;
+    setFilterIndex(next);
+    filterPipeline.setEffect(FILTERS[next]);
+    if (next === 0) {
+      setFilterPlan(null);
+    }
+  }, [filterPipeline]);
 
   const start = useCallback(async () => {
     setError(null);
@@ -307,11 +357,23 @@ export default function App(): React.JSX.Element {
   const dots = face ? dotIndices(face.landmarks.length) : [];
 
   return (
-    <View style={styles.root}>
+    <View
+      style={styles.root}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setCameraViewSize({ width, height });
+      }}
+    >
       <StatusBar barStyle="light-content" />
       <ARCameraView style={StyleSheet.absoluteFill} />
+      <FilterPreviewOverlay
+        plan={filterPlan}
+        viewSize={cameraViewSize}
+        mirrored={cameraPosition === "front"}
+      />
       <View style={styles.dots} pointerEvents="none">
         {face &&
+          filterIndex === 0 &&
           dots.map((index) => {
             const point = face.landmarks[index];
             if (!point) {
@@ -354,6 +416,10 @@ export default function App(): React.JSX.Element {
             <Button title="Start" onPress={start} />
           )}
           <Button title={`Camera: ${cameraPosition}`} onPress={switchCamera} />
+          <Button
+            title={`Filter: ${FILTER_LABELS[filterIndex]}`}
+            onPress={cycleFilter}
+          />
           <Button title="Mock demo" onPress={enterMock} />
         </View>
       </SafeAreaView>
