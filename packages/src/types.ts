@@ -194,7 +194,8 @@ export interface EffectDefinition {
   /** What to do when face tracking is lost (gifts). */
   trackingLostFallback: "banner" | "stage" | "hide";
   /**
-   * Vector shapes drawn by the pre-encode compositor (M3 filters).
+   * Shapes drawn by the pre-encode compositor (M3 filters; image
+   * shapes since the gold pilot, 0.1.7).
    * Absent/empty = no shapes (grade-only filters). Shapes are data,
    * like everything else in an effect — see FilterShapeDef.
    */
@@ -287,7 +288,7 @@ export interface FilterGradeParams {
  * Geometry is relative to the shape's anchor rect (fractions of the
  * rect's width/height), so shapes scale with the face automatically.
  */
-export interface FilterShapeDef {
+export interface FilterVectorShapeDef {
   kind: "ellipse" | "rect" | "line" | "polyline";
   /** Index into the effect's anchors array. */
   anchor: number;
@@ -310,6 +311,29 @@ export interface FilterShapeDef {
 }
 
 /**
+ * One image shape inside a data-defined filter (gold pilot, 0.1.7).
+ * The compositor draws the referenced image asset aspect-fit inside
+ * the shape rect — bottom-pinned for above-head anchors, centered
+ * otherwise — rotated by head roll like every other shape. Android
+ * compositors skip unknown shape kinds, so an image shape renders
+ * nothing there until the Kotlin image case lands; iOS draws it.
+ */
+export interface FilterImageShapeDef {
+  kind: "image";
+  /** Index into the effect's anchors array. */
+  anchor: number;
+  /**
+   * Sub-rect within the anchor rect, as fractions (default: the full
+   * anchor rect { x: 0, y: 0, width: 1, height: 1 }).
+   */
+  rect?: { x: number; y: number; width: number; height: number };
+  /** Index into the effect's assets array; must hold an image asset. */
+  asset: number;
+}
+
+export type FilterShapeDef = FilterVectorShapeDef | FilterImageShapeDef;
+
+/**
  * One draw command produced by the M3 filter renderer, in normalized
  * 0..1 frame space (origin top-left, sensor space — the same space
  * the pre-encode compositor draws in, so no mirroring is applied here;
@@ -327,6 +351,15 @@ export type FilterDrawCommand =
       color: string;
       fill: boolean;
       lineWidth: number;
+    }
+  | {
+      kind: "image";
+      /** Absolute rect in normalized frame space (unfitted; the compositor aspect-fits inside it). */
+      rect: { x: number; y: number; width: number; height: number };
+      /** Resolved image data URI from the effect's assets. */
+      assetUri: string;
+      /** True when the anchor placement is above-head: the compositor bottom-pins the fitted image. */
+      bottomPin: boolean;
     }
   | { kind: "grade"; params: FilterGradeParams };
 

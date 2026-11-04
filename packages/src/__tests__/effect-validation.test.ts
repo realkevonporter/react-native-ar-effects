@@ -203,10 +203,13 @@ describe("validateEffectDefinition: anchors", () => {
 });
 
 describe("validateEffectDefinition: render-path payload rules", () => {
-  it("rejects filters with assets, gifts with shapes or grades", () => {
+  it("rejects filters with non-image assets, gifts with shapes or grades", () => {
     expectThrow(
-      { ...baseFilter(), assets: [baseGift().assets[0]] },
-      /must not list assets/,
+      {
+        ...baseFilter(),
+        assets: [{ ...baseGift().assets[0], kind: "lottie" }],
+      },
+      /only list image assets/,
     );
     expectThrow(
       {
@@ -235,6 +238,26 @@ describe("validateEffectDefinition: render-path payload rules", () => {
     const noop = baseFilter({ anchors: [] });
     delete (noop as Partial<EffectDefinition>).shapes;
     expectThrow(noop, /render nothing/);
+  });
+});
+
+describe("validateEffectDefinition: filter image assets", () => {
+  it("accepts a filter with an image asset and an image shape", () => {
+    const effect = baseFilter({
+      shapes: [{ kind: "image", anchor: 0, asset: 0 }],
+      assets: [baseGift().assets[0]],
+    });
+    assert.doesNotThrow(() => validateEffectDefinition(effect));
+  });
+
+  it("rejects image shapes with out-of-range asset indices", () => {
+    expectThrow(
+      baseFilter({
+        shapes: [{ kind: "image", anchor: 0, asset: 1 }],
+        assets: [baseGift().assets[0]],
+      }),
+      /asset 1/,
+    );
   });
 });
 

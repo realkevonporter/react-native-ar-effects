@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = "react-native-ar-effects"
-  s.version          = "0.1.6"
+  s.version          = "0.1.7"
   s.summary          = "Open-source face tracking + AR effects for React Native live video"
   s.description      = "MediaPipe Face Landmarker behind one DetectionProvider interface, with a camera preview view for live landmark overlays, plus host-side pre-encode filters that plug into LiveKit's video-effect pipeline."
   s.homepage         = "https://github.com/realkevonporter/react-native-ar-effects"

@@ -29,8 +29,11 @@
  */
 
 import {
+  CAT_EARS_GOLD_PNG,
+  CROWN_ROYAL_GOLD_PNG,
   GOLD_ORB_PNG,
   LOVE_HEART_PNG,
+  NERD_GLASSES_GOLD_PNG,
   SUPER_STAR_PNG,
 } from "./catalogue-assets";
 import { GOLDEN_SHADES, WARM_SUNSET } from "./sample-filters";
@@ -42,7 +45,7 @@ export const CAT_EARS: EffectDefinition = {
   kind: "filter",
   name: "Cat Ears",
   formatVersion: 1,
-  version: 1,
+  version: 2,
   tags: ["funny", "animal", "ears"],
   renderPath: "pre-encode",
   animation: { mode: "loop" },
@@ -55,37 +58,20 @@ export const CAT_EARS: EffectDefinition = {
     },
   ],
   shapes: [
-    // Outer ears (dark), then inner ears (pink), left then right.
     {
-      kind: "ellipse",
+      kind: "image",
       anchor: 0,
-      rect: { x: 0.08, y: 0.05, width: 0.3, height: 0.55 },
-      color: "#4a4a4a",
-      fill: true,
-    },
-    {
-      kind: "ellipse",
-      anchor: 0,
-      rect: { x: 0.62, y: 0.05, width: 0.3, height: 0.55 },
-      color: "#4a4a4a",
-      fill: true,
-    },
-    {
-      kind: "ellipse",
-      anchor: 0,
-      rect: { x: 0.15, y: 0.18, width: 0.16, height: 0.3 },
-      color: "#ff9ebb",
-      fill: true,
-    },
-    {
-      kind: "ellipse",
-      anchor: 0,
-      rect: { x: 0.69, y: 0.18, width: 0.16, height: 0.3 },
-      color: "#ff9ebb",
-      fill: true,
+      asset: 0,
     },
   ],
-  assets: [],
+    assets: [
+    {
+      uri: CAT_EARS_GOLD_PNG,
+      kind: "image",
+      width: 768,
+      height: 453,
+    },
+  ],
   trackingLostFallback: "hide",
 };
 
@@ -145,7 +131,7 @@ export const CROWN_ROYAL: EffectDefinition = {
   kind: "filter",
   name: "Royal Crown",
   formatVersion: 1,
-  version: 1,
+  version: 2,
   tags: ["funny", "crown", "royal"],
   renderPath: "pre-encode",
   animation: { mode: "loop" },
@@ -159,29 +145,19 @@ export const CROWN_ROYAL: EffectDefinition = {
   ],
   shapes: [
     {
-      kind: "rect",
+      kind: "image",
       anchor: 0,
-      rect: { x: 0.15, y: 0.55, width: 0.7, height: 0.2 },
-      color: "#d4af37",
-      fill: true,
-    },
-    {
-      kind: "polyline",
-      anchor: 0,
-      points: [
-        { x: 0.15, y: 0.55 },
-        { x: 0.25, y: 0.25 },
-        { x: 0.35, y: 0.5 },
-        { x: 0.5, y: 0.2 },
-        { x: 0.65, y: 0.5 },
-        { x: 0.75, y: 0.25 },
-        { x: 0.85, y: 0.55 },
-      ],
-      color: "#d4af37",
-      lineWidth: 0.012,
+      asset: 0,
     },
   ],
-  assets: [],
+    assets: [
+    {
+      uri: CROWN_ROYAL_GOLD_PNG,
+      kind: "image",
+      width: 768,
+      height: 503,
+    },
+  ],
   trackingLostFallback: "hide",
 };
 
@@ -221,7 +197,7 @@ export const NERD_GLASSES: EffectDefinition = {
   kind: "filter",
   name: "Nerd Glasses",
   formatVersion: 1,
-  version: 1,
+  version: 2,
   tags: ["funny", "glasses"],
   renderPath: "pre-encode",
   animation: { mode: "loop" },
@@ -235,33 +211,19 @@ export const NERD_GLASSES: EffectDefinition = {
   ],
   shapes: [
     {
-      kind: "rect",
+      kind: "image",
       anchor: 0,
-      rect: { x: 0.02, y: 0.25, width: 0.44, height: 0.5 },
-      color: "#1a1a1a",
-      fill: false,
-      lineWidth: 0.01,
-    },
-    {
-      kind: "rect",
-      anchor: 0,
-      rect: { x: 0.54, y: 0.25, width: 0.44, height: 0.5 },
-      color: "#1a1a1a",
-      fill: false,
-      lineWidth: 0.01,
-    },
-    {
-      kind: "line",
-      anchor: 0,
-      points: [
-        { x: 0.46, y: 0.5 },
-        { x: 0.54, y: 0.5 },
-      ],
-      color: "#1a1a1a",
-      lineWidth: 0.01,
+      asset: 0,
     },
   ],
-  assets: [],
+    assets: [
+    {
+      uri: NERD_GLASSES_GOLD_PNG,
+      kind: "image",
+      width: 768,
+      height: 272,
+    },
+  ],
   trackingLostFallback: "hide",
 };
 

@@ -198,12 +198,32 @@ export function validateFilterEffect(effect: EffectDefinition): void {
         `Invalid filter shape anchor ${shape.anchor}: effect "${effect.id}" has ${anchors.length} anchors`,
       );
     }
-    parseHexColor(shape.color);
-    const lineWidth = shape.lineWidth ?? DEFAULT_LINE_WIDTH;
-    if (!(lineWidth > 0) || lineWidth > 0.1) {
-      throw new Error(
-        `Invalid filter lineWidth ${lineWidth}: expected (0, 0.1]`,
-      );
+    if (shape.kind === "image") {
+      const assets = effect.assets ?? [];
+      if (
+        !Number.isInteger(shape.asset) ||
+        shape.asset < 0 ||
+        shape.asset >= assets.length
+      ) {
+        throw new Error(
+          `Invalid filter image shape asset ${shape.asset}: effect "${effect.id}" has ${assets.length} assets`,
+        );
+      }
+      if (assets[shape.asset].kind !== "image") {
+        throw new Error(
+          `Invalid filter image shape asset ${shape.asset}: effect "${effect.id}" asset is ${assets[shape.asset].kind}, not image`,
+        );
+      }
+    } else {
+      parseHexColor(shape.color);
+    }
+    if (shape.kind !== "image") {
+      const lineWidth = shape.lineWidth ?? DEFAULT_LINE_WIDTH;
+      if (!(lineWidth > 0) || lineWidth > 0.1) {
+        throw new Error(
+          `Invalid filter lineWidth ${lineWidth}: expected (0, 0.1]`,
+        );
+      }
     }
     const rect = shape.rect ?? { x: 0, y: 0, width: 1, height: 1 };
     for (const [key, value] of Object.entries(rect)) {
@@ -257,6 +277,17 @@ export function renderFilterCommands(
       width: sub.width * rect.width,
       height: sub.height * rect.height,
     };
+    if (shape.kind === "image") {
+      const asset = (effect.assets ?? [])[shape.asset];
+      if (!asset) continue;
+      commands.push({
+        kind: "image",
+        rect: absolute,
+        assetUri: asset.uri,
+        bottomPin: anchor.placement === "above-head",
+      });
+      continue;
+    }
     const points = (shape.points ?? []).map((p) => ({
       x: rect.x + p.x * rect.width,
       y: rect.y + p.y * rect.height,

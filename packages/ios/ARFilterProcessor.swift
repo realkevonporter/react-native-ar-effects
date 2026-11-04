@@ -115,12 +115,18 @@ final class ARFilterProcessor: NSObject {
     var color: UInt32
     var fill: Bool
     var lineWidth: Double
+    /// Image shapes only: index into FilterState.images (-1 = none).
+    var asset: Int
   }
 
   struct FilterState {
     var grade: Grade?
     var anchors: [Anchor]
     var shapes: [Shape]
+    /// Decoded image assets, parallel to the definition's assets
+    /// array (nil for non-image or undecodable entries). Decoded
+    /// once at setFilter, never per frame.
+    var images: [CGImage?]
   }
 
   /// Parse the EffectDefinition JSON handed over by the JS adapter.
@@ -155,6 +161,26 @@ final class ARFilterProcessor: NSObject {
         offsetY: (offset?["y"] as? NSNumber)?.doubleValue ?? 0
       ))
     }
+    var images: [CGImage?] = []
+    for raw in (root["assets"] as? [[String: Any]]) ?? [] {
+      guard (raw["kind"] as? String) == "image",
+            let uri = raw["uri"] as? String,
+            uri.hasPrefix("data:image/"),
+            let comma = uri.firstIndex(of: ",")
+      else {
+        images.append(nil)
+        continue
+      }
+      let b64 = String(uri[uri.index(after: comma)...])
+      guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+            let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+      else {
+        images.append(nil)
+        continue
+      }
+      images.append(cgImage)
+    }
     var shapes: [Shape] = []
     for raw in (root["shapes"] as? [[String: Any]]) ?? [] {
       let rectRaw = raw["rect"] as? [String: Any]
@@ -177,10 +203,11 @@ final class ARFilterProcessor: NSObject {
         },
         color: Self.parseHex(colorString),
         fill: (raw["fill"] as? Bool) ?? false,
-        lineWidth: (raw["lineWidth"] as? NSNumber)?.doubleValue ?? 0.008
+        lineWidth: (raw["lineWidth"] as? NSNumber)?.doubleValue ?? 0.008,
+        asset: (raw["asset"] as? NSNumber)?.intValue ?? -1
       ))
     }
-    self.filter = FilterState(grade: grade, anchors: anchors, shapes: shapes)
+    self.filter = FilterState(grade: grade, anchors: anchors, shapes: shapes, images: images)
   }
 
   private static func parseHex(_ string: String) -> UInt32 {
@@ -631,6 +658,40 @@ final class ARFilterProcessor: NSObject {
         context.move(to: pts[0])
         for pt in pts.dropFirst() { context.addLine(to: pt) }
         context.strokePath()
+      case "image":
+        guard shape.asset >= 0, shape.asset < filter.images.count,
+              let cgImage = filter.images[shape.asset]
+        else { continue }
+        // Aspect-fit inside cgRect (pixel space): never stretch.
+        // Above-head anchors bottom-pin (the crown sits ON the
+        // head; its rect extends above the face), on-face anchors
+        // center. The outer context is y-flipped (normalized
+        // top-left coords map directly), which would draw the
+        // image upside down; counter-flip around the fitted
+        // rect's center. Nested save/restore pairs with the roll
+        // rotation above.
+        let imgW = CGFloat(cgImage.width)
+        let imgH = CGFloat(cgImage.height)
+        guard imgW > 0, imgH > 0 else { continue }
+        let scale = min(cgRect.width / imgW, cgRect.height / imgH)
+        let fittedWidth = imgW * scale
+        let fittedHeight = imgH * scale
+        let fittedX = cgRect.midX - fittedWidth / 2
+        let fittedY = anchor.placement == "above-head"
+          ? cgRect.maxY - fittedHeight
+          : cgRect.midY - fittedHeight / 2
+        context.saveGState()
+        context.translateBy(x: fittedX + fittedWidth / 2, y: fittedY + fittedHeight / 2)
+        context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .high
+        context.draw(
+          cgImage,
+          in: CGRect(
+            x: -fittedWidth / 2, y: -fittedHeight / 2,
+            width: fittedWidth, height: fittedHeight
+          )
+        )
+        context.restoreGState()
       default:
         continue
       }

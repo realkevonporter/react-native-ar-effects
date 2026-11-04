@@ -86,7 +86,10 @@ describe("catalogue integrity", () => {
       const hasGrade = effect.grade !== undefined;
       const hasShapes = (effect.shapes ?? []).length > 0;
       assert.ok(hasGrade || hasShapes, effect.id);
-      assert.equal(effect.assets.length, 0, effect.id);
+      assert.ok(
+        effect.assets.every((a) => a.kind === "image"),
+        effect.id,
+      );
     }
     for (const effect of CATALOGUE_GIFTS) {
       assert.ok(effect.assets.length >= 1, effect.id);
@@ -131,8 +134,20 @@ describe("catalogue filters render", () => {
       const commands = renderFilterCommands(effect, face);
       assert.ok(commands.length >= 1, effect.id);
       assert.ok(
-        commands.every((c) => c.kind === "shape"),
+        commands.every((c) => c.kind === "shape" || c.kind === "image"),
         effect.id,
+      );
+    }
+  });
+
+  it("gold pilot filters emit image commands", () => {
+    const face = trackedFace();
+    for (const id of ["crown-royal", "cat-ears", "nerd-glasses"]) {
+      const effect = getEffectById(id);
+      const commands = renderFilterCommands(effect, face);
+      assert.ok(
+        commands.some((c) => c.kind === "image"),
+        id,
       );
     }
   });
