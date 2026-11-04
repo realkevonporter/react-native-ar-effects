@@ -45,6 +45,13 @@ import WebRTC
 /// rendered as two stacked landscape rects instead of
 /// side-by-side lenses.)
 ///
+/// Head roll: drawShapes rotates every shape by the eye-line
+/// angle (landmarks 33 -> 263, normalized to (-90, 90]) around
+/// its anchor center, so filters tilt with the face. Position
+/// already tracks via landmarks; above-head placement along the
+/// head's tilted up-axis (rather than the bounding-box top) is
+/// future work.
+///
 /// Landmarks are emitted via onLandmarks (same dict shape as M1's
 /// onFaceFrame, single face, id "host-face") so the host app can
 /// forward them over the live socket for M2 viewer anchoring at M5.
@@ -553,6 +560,25 @@ final class ARFilterProcessor: NSObject {
     context.translateBy(x: 0, y: CGFloat(height))
     context.scaleBy(x: 1, y: -1)
 
+    // Head roll: the eye line tilts with the head. Every shape is
+    // rotated by the eye-line angle around its anchor center so
+    // filters tilt with the face instead of staying axis-aligned.
+    // Normalized to (-90, 90] so the result does not depend on
+    // which eye index is left vs right; correct for all normal
+    // head tilts (upside-down heads are out of scope). When the
+    // face is upright the angle is ~0 and rendering is unchanged.
+    var rollAngle = 0.0
+    if landmarks.count > 263 {
+      let dx = landmarks[263].x - landmarks[33].x
+      let dy = landmarks[263].y - landmarks[33].y
+      if dx != 0 || dy != 0 {
+        var angle = atan2(dy, dx)
+        if angle > Double.pi / 2 { angle -= Double.pi }
+        if angle < -Double.pi / 2 { angle += Double.pi }
+        rollAngle = angle
+      }
+    }
+
     for shape in filter.shapes {
       guard shape.anchor < filter.anchors.count else { continue }
       let anchor = filter.anchors[shape.anchor]
@@ -574,6 +600,18 @@ final class ARFilterProcessor: NSObject {
         x: abs.x * Double(width), y: abs.y * Double(height),
         width: abs.width * Double(width), height: abs.height * Double(height)
       )
+      // Rotate the shape around its anchor center by the head
+      // roll. In this flipped context, rotate(by:) turns shapes
+      // clockwise-positive in y-down coordinates, matching the
+      // eye-line angle measured above. The defer restores the
+      // context even when a case below hits `continue`.
+      context.saveGState()
+      defer { context.restoreGState() }
+      let pivotX = (rect.x + rect.width / 2) * Double(width)
+      let pivotY = (rect.y + rect.height / 2) * Double(height)
+      context.translateBy(x: pivotX, y: pivotY)
+      context.rotate(by: CGFloat(rollAngle))
+      context.translateBy(x: -pivotX, y: -pivotY)
       switch shape.kind {
       case "ellipse":
         if shape.fill { context.fillEllipse(in: cgRect) }
