@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreImage
 import Foundation
+import ImageIO
 import MediaPipeTasksVision
 import WebRTC
 
@@ -201,7 +202,7 @@ final class ARFilterProcessor: NSObject {
     var landmarks: [(x: Double, y: Double)] = []
     var bounds: (x: Double, y: Double, width: Double, height: Double)?
     if !filter.shapes.isEmpty, !landmarkerFailed {
-      if let result = detectFirstFace(pixelBuffer: sourceBuffer, timestampNs: frame.timeStampNs) {
+      if let result = detectFirstFace(pixelBuffer: sourceBuffer, rotation: frame.rotation, timestampNs: frame.timeStampNs) {
         landmarks = result.landmarks
         bounds = result.bounds
       }
@@ -290,21 +291,31 @@ final class ARFilterProcessor: NSObject {
 
   private func detectFirstFace(
     pixelBuffer: CVPixelBuffer,
+    rotation: RTCVideoRotation,
     timestampNs: Int64
   ) -> (landmarks: [(x: Double, y: Double)], bounds: (x: Double, y: Double, width: Double, height: Double))? {
     ensureLandmarker()
     guard let landmarker = landmarker else { return nil }
+    // Detection input must be upright and BGRA: the camera buffer
+    // may be NV12 (which MPImage rejects) and, on a portrait phone,
+    // it is a landscape sensor buffer holding a sideways face
+    // (rotation uncompensated) — both make detection return nothing
+    // while grades keep working. The upright buffer fixes both;
+    // landmarks map back to buffer coordinates for drawing, so the
+    // rest of the pipeline is unchanged.
+    let detectionBuffer = uprightBGRABuffer(from: pixelBuffer, rotation: rotation) ?? pixelBuffer
     // VIDEO mode requires strictly increasing timestamps (M1 rule).
     let timestampMs = max(timestampNs / 1_000_000, lastTimestampMs + 1)
     lastTimestampMs = timestampMs
     do {
-      let image = try MPImage(pixelBuffer: pixelBuffer)
+      let image = try MPImage(pixelBuffer: detectionBuffer)
       let result = try landmarker.detect(
         videoFrame: image,
         timestampInMilliseconds: Int(timestampMs)
       )
       guard let first = result.faceLandmarks.first else { return nil }
-      let points = first.map { (x: Double($0.x), y: Double($0.y)) }
+      let uprightPoints = first.map { (x: Double($0.x), y: Double($0.y)) }
+      let points = uprightPoints.map { mapBack($0, rotation: rotation) }
       let xs = points.map { $0.x }
       let ys = points.map { $0.y }
       guard let minX = xs.min(), let maxX = xs.max(),
@@ -315,6 +326,67 @@ final class ARFilterProcessor: NSObject {
       )
     } catch {
       return nil
+    }
+  }
+
+  /// Upright BGRA buffer for detection, or nil to fall back to the
+  /// original buffer. Returns the original buffer untouched when it
+  /// is already upright BGRA (rotation 0 + 32BGRA). Otherwise renders
+  /// through CoreImage: orientation applied (portrait phone buffers
+  /// are landscape) into a fresh 32BGRA buffer.
+  private func uprightBGRABuffer(
+    from buffer: CVPixelBuffer,
+    rotation: RTCVideoRotation
+  ) -> CVPixelBuffer? {
+    let format = CVPixelBufferGetPixelFormatType(buffer)
+    let needsRotate = rotation.rawValue != 0
+    let needsConvert = format != kCVPixelFormatType_32BGRA
+    guard needsRotate || needsConvert else { return buffer }
+    let width = CVPixelBufferGetWidth(buffer)
+    let height = CVPixelBufferGetHeight(buffer)
+    var image = CIImage(cvPixelBuffer: buffer)
+    if needsRotate {
+      let orientation: CGImagePropertyOrientation
+      switch rotation.rawValue {
+      case 90: orientation = .right
+      case 180: orientation = .down
+      case 270: orientation = .left
+      default: orientation = .up
+      }
+      image = image.oriented(orientation)
+      // Normalize the extent origin so the render fills the buffer.
+      let origin = image.extent.origin
+      if origin.x != 0 || origin.y != 0 {
+        image = image.transformed(by: CGAffineTransform(translationX: -origin.x, y: -origin.y))
+      }
+    }
+    let swapped = rotation.rawValue == 90 || rotation.rawValue == 270
+    let outWidth = swapped ? height : width
+    let outHeight = swapped ? width : height
+    var out: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+      nil, outWidth, outHeight,
+      kCVPixelFormatType_32BGRA,
+      nil,
+      &out
+    )
+    guard status == kCVReturnSuccess, let out = out else { return nil }
+    ciContext.render(image, to: out)
+    return out
+  }
+
+  /// Map a landmark from upright detection coordinates back to
+  /// buffer coordinates (inverse of the display rotation).
+  /// Normalized coordinates, so dimensions cancel.
+  private func mapBack(
+    _ p: (x: Double, y: Double),
+    rotation: RTCVideoRotation
+  ) -> (x: Double, y: Double) {
+    switch rotation.rawValue {
+    case 90: return (x: p.y, y: 1 - p.x)
+    case 180: return (x: 1 - p.x, y: 1 - p.y)
+    case 270: return (x: 1 - p.y, y: p.x)
+    default: return p
     }
   }
 
