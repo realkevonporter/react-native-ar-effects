@@ -33,6 +33,8 @@ export type {
   LandmarkStreamConsumerConfig,
   FilterGradeParams,
   FilterShapeDef,
+  FilterVectorShapeDef,
+  FilterImageShapeDef,
   FilterDrawCommand,
   FilterFramePlan,
   HostFilterConfig,

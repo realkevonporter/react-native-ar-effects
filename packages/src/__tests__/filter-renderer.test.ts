@@ -293,3 +293,74 @@ describe("validateFilterEffect", () => {
     );
   });
 });
+
+describe("renderFilterCommands: image shapes", () => {
+  const IMAGE_ASSET = {
+    uri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    kind: "image" as const,
+    width: 1,
+    height: 1,
+  };
+
+  it("emits an image command with the resolved asset URI", () => {
+    const effect = baseEffect({
+      shapes: [{ kind: "image", anchor: 0, asset: 0 }],
+      assets: [IMAGE_ASSET],
+    });
+    const commands = renderFilterCommands(effect, faceState());
+    assert.equal(commands.length, 1);
+    const cmd = commands[0];
+    assert.equal(cmd.kind, "image");
+    if (cmd.kind !== "image") throw new Error("unreachable");
+    assert.equal(cmd.assetUri, IMAGE_ASSET.uri);
+    assert.equal(cmd.bottomPin, false);
+    // Anchor rect: x 0.27, y 0.17, w/h 0.46 (see centroid test).
+    approx(cmd.rect.x, 0.27);
+    approx(cmd.rect.y, 0.17);
+    approx(cmd.rect.width, 0.46);
+    approx(cmd.rect.height, 0.46);
+  });
+
+  it("bottom-pins above-head image shapes", () => {
+    const effect = baseEffect({
+      anchors: [
+        {
+          placement: "above-head",
+          landmarkIndices: [10],
+          scaleToFace: 1.1,
+          offset: { x: 0, y: 0 },
+        },
+      ],
+      shapes: [{ kind: "image", anchor: 0, asset: 0 }],
+      assets: [IMAGE_ASSET],
+    });
+    const commands = renderFilterCommands(effect, faceState());
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0].kind, "image");
+    if (commands[0].kind !== "image") throw new Error("unreachable");
+    assert.equal(commands[0].bottomPin, true);
+  });
+
+  it("rejects image shapes with bad asset references", () => {
+    assert.throws(
+      () =>
+        validateFilterEffect(
+          baseEffect({
+            shapes: [{ kind: "image", anchor: 0, asset: 1 }],
+            assets: [IMAGE_ASSET],
+          }),
+        ),
+      /asset 1/,
+    );
+    assert.throws(
+      () =>
+        validateFilterEffect(
+          baseEffect({
+            shapes: [{ kind: "image", anchor: 0, asset: 0 }],
+            assets: [{ ...IMAGE_ASSET, kind: "lottie" as const }],
+          }),
+        ),
+      /not image/,
+    );
+  });
+});

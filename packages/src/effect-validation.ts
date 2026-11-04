@@ -23,10 +23,11 @@
  *    (0, 5]; offsets are finite. Empty landmarkIndices are allowed:
  *    above-head anchors resolve from face bounds, not indices.
  *  - render-path payload rules: filters must carry a grade or at
- *    least one shape (otherwise they render nothing) and must not
- *    list assets (the pre-encode compositor never reads them, so a
- *    listed asset would be silently ignored); gifts must not carry
- *    shapes or a grade (the viewer overlay never renders them).
+ *    least one shape (otherwise they render nothing) and may only
+ *    list image assets (the pre-encode compositor draws images but
+ *    would silently ignore a lottie/svga/video-alpha asset); gifts
+ *    must not carry shapes or a grade (the viewer overlay never
+ *    renders them).
  *    Gifts may list zero assets — they render as a name pill (M2).
  *  - assets: kind is lottie|svga|image|video-alpha, dimensions are
  *    positive, and the uri RESOLVES: data: URIs must be well-formed
@@ -36,8 +37,9 @@
  *    check); any other scheme is rejected — React Native's Image
  *    loader cannot resolve it either.
  *  - grade + shapes: delegated to validateFilterEffect, which checks
- *    grade ranges, hex colors, line widths, shape rects, and that
- *    line/polyline shapes carry points and shape anchors exist.
+ *    grade ranges, hex colors, line widths, shape rects, image-shape
+ *    asset references, and that line/polyline shapes carry points
+ *    and shape anchors exist.
  *
  * Pure TypeScript, no React Native imports, no Buffer/atob — the
  * base64 check is hand-rolled so this module runs under Hermes too.
@@ -324,12 +326,20 @@ export function validateEffectDefinition(effect: unknown): EffectDefinition {
     fail(id, "assets must be an array");
   }
   const assets = effect.assets as unknown[];
-  if (effect.kind === "filter" && assets.length > 0) {
-    fail(
-      id,
-      "filters must not list assets — the pre-encode compositor never " +
-        "reads them, so a listed asset would be silently ignored",
-    );
+  if (effect.kind === "filter") {
+    for (const asset of assets) {
+      if (
+        isRecord(asset) &&
+        asset.kind !== undefined &&
+        asset.kind !== "image"
+      ) {
+        fail(
+          id,
+          `filters may only list image assets — the pre-encode compositor ` +
+            `draws images but would silently ignore a ${JSON.stringify(asset.kind)} asset`,
+        );
+      }
+    }
   }
   if (effect.kind === "gift") {
     if (
