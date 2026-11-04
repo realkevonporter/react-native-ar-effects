@@ -20,22 +20,30 @@ import WebRTC
 ///    the camera capturer produces pixel buffers, so this is a
 ///    defensive branch, not the normal path.
 /// 3. Grade-only filters skip detection entirely (a grade needs no
-///    face). Anchor filters run MediaPipe on the ORIGINAL buffer
-///    (cleaner for detection than the graded one) and draw shapes
-///    from the first face's landmarks.
+///    face). Anchor filters run MediaPipe on the UPRIGHT buffer
+///    (uprightBGRABuffer: rotation-compensated + BGRA) and draw
+///    shapes on that same buffer — the anchor layout assumes
+///    face-x is left-right, which is only true upright. A shape
+///    filter's output frame carries rotation 0 (already upright);
+///    grade-only filters keep the original buffer + rotation
+///    passthrough.
 /// 4. The output is ALWAYS a new pixel buffer — the source buffer is
 ///    never mutated (WebRTC may reuse it downstream).
 /// 5. Over-budget frames return the ORIGINAL frame and count toward
 ///    bypass (8 consecutive -> 3s bypass -> probe), exactly the TS
 ///    governor contract. The filter never stalls the encoder.
 ///
-/// Coordinate space: detection + compositing share the frame's
-/// sensor space, so landmarks map to pixels directly (x * width,
-/// y * height) with NO mirroring — same rule as the TS renderer.
-/// Rotation is passed through on the output frame; whether landmark
-/// geometry needs rotation compensation depends on how the fork's
-/// capturer orients buffers, and is a first-device verification
-/// point (see ARCHITECTURE.md §M3).
+/// Coordinate space: shape filters composite in UPRIGHT space
+/// (detection buffer + upright landmarks + rotation-0 output),
+/// because the anchor layout assumes face-x is left-right. The
+/// landmark relay stays in sensor space (mapped back) for M2
+/// viewer anchoring. Grade-only filters composite on the original
+/// buffer with rotation passthrough. Landmarks map to pixels
+/// directly (x * width, y * height) with NO mirroring — same rule
+/// as the TS renderer. (On-device 1.0.45 proved the old
+/// sensor-space compositing transposes shapes: Nerd Glasses
+/// rendered as two stacked landscape rects instead of
+/// side-by-side lenses.)
 ///
 /// Landmarks are emitted via onLandmarks (same dict shape as M1's
 /// onFaceFrame, single face, id "host-face") so the host app can
@@ -199,18 +207,50 @@ final class ARFilterProcessor: NSObject {
     let start = CFAbsoluteTimeGetCurrent()
 
     // Detection: only when shapes need a face; grade-only skips it.
+    // Shape filters composite in UPRIGHT space: the anchor layout
+    // assumes face-x is left-right, which is only true of the
+    // upright buffer. On a portrait phone the sensor buffer holds
+    // a sideways face, so laying lenses out on sensor landmarks
+    // transposes them — on-device 1.0.45: Nerd Glasses rendered as
+    // two stacked landscape rects instead of side-by-side lenses.
+    // So for shape filters the render source is the upright
+    // detection buffer and the output frame carries rotation 0
+    // (already upright); grade-only filters keep the original
+    // buffer + rotation passthrough.
     var landmarks: [(x: Double, y: Double)] = []
     var bounds: (x: Double, y: Double, width: Double, height: Double)?
+    var renderBuffer = sourceBuffer
+    var renderWidth = width
+    var renderHeight = height
+    var outputRotation = frame.rotation
+    var detectionRotated = false
     if !filter.shapes.isEmpty, !landmarkerFailed {
-      if let result = detectFirstFace(pixelBuffer: sourceBuffer, rotation: frame.rotation, timestampNs: frame.timeStampNs) {
-        landmarks = result.landmarks
-        bounds = result.bounds
+      if let up = uprightBGRABuffer(from: sourceBuffer, rotation: frame.rotation) {
+        renderBuffer = up
+        renderWidth = CVPixelBufferGetWidth(up)
+        renderHeight = CVPixelBufferGetHeight(up)
+        if frame.rotation.rawValue != 0 {
+          outputRotation = RTCVideoRotation(rawValue: 0) ?? frame.rotation
+          detectionRotated = true
+        }
+        if let result = detectFirstFace(pixelBuffer: up, timestampNs: frame.timeStampNs) {
+          landmarks = result.landmarks
+          bounds = result.bounds
+        }
+      } else {
+        // Upright conversion failed: detect on the source buffer
+        // (pre-0.1.5 behavior — shapes may transpose, but the
+        // stream keeps flowing).
+        if let result = detectFirstFace(pixelBuffer: sourceBuffer, timestampNs: frame.timeStampNs) {
+          landmarks = result.landmarks
+          bounds = result.bounds
+        }
       }
     }
 
     guard let outputBuffer = render(
-      sourceBuffer: sourceBuffer,
-      width: width, height: height,
+      sourceBuffer: renderBuffer,
+      width: renderWidth, height: renderHeight,
       filter: filter,
       landmarks: landmarks,
       bounds: bounds
@@ -232,7 +272,24 @@ final class ARFilterProcessor: NSObject {
     bypassed = false
 
     if let bounds = bounds {
-      let points: [[String: Double]] = landmarks.map {
+      // Relay stays in sensor (buffer) space, as M5 expects: when
+      // detection ran on a rotated upright buffer, map back.
+      let relayLandmarks: [(x: Double, y: Double)]
+      let relayBounds: (x: Double, y: Double, width: Double, height: Double)
+      if detectionRotated {
+        relayLandmarks = landmarks.map { mapBack($0, rotation: frame.rotation) }
+        let xs = relayLandmarks.map { $0.x }
+        let ys = relayLandmarks.map { $0.y }
+        let minX = xs.min() ?? 0
+        let maxX = xs.max() ?? 0
+        let minY = ys.min() ?? 0
+        let maxY = ys.max() ?? 0
+        relayBounds = (x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+      } else {
+        relayLandmarks = landmarks
+        relayBounds = bounds
+      }
+      let points: [[String: Double]] = relayLandmarks.map {
         ["x": $0.x, "y": $0.y, "z": 0]
       }
       let faceDict: [String: Any] = [
@@ -240,8 +297,8 @@ final class ARFilterProcessor: NSObject {
         "landmarks": points,
         "landmarkMap": "mediapipe-478",
         "bounds": [
-          "x": bounds.x, "y": bounds.y,
-          "width": bounds.width, "height": bounds.height,
+          "x": relayBounds.x, "y": relayBounds.y,
+          "width": relayBounds.width, "height": relayBounds.height,
         ],
         "timestampMs": Double(frame.timeStampNs / 1_000_000),
         "source": "mediapipe",
@@ -251,7 +308,7 @@ final class ARFilterProcessor: NSObject {
 
     let outputFrame = RTCVideoFrame(
       buffer: RTCCVPixelBuffer(pixelBuffer: outputBuffer),
-      rotation: frame.rotation,
+      rotation: outputRotation,
       timeStampNs: frame.timeStampNs
     )
     return outputFrame
@@ -289,33 +346,28 @@ final class ARFilterProcessor: NSObject {
     }
   }
 
+  /// Detect the first face on an already-upright buffer (the
+  /// caller prepares it via uprightBGRABuffer). Returns landmarks
+  /// + bounds in THAT buffer's coordinates — the caller draws on
+  /// the same buffer, so no mapping is needed here. The landmark
+  /// relay maps back to sensor space separately (see capturer).
   private func detectFirstFace(
     pixelBuffer: CVPixelBuffer,
-    rotation: RTCVideoRotation,
     timestampNs: Int64
   ) -> (landmarks: [(x: Double, y: Double)], bounds: (x: Double, y: Double, width: Double, height: Double))? {
     ensureLandmarker()
     guard let landmarker = landmarker else { return nil }
-    // Detection input must be upright and BGRA: the camera buffer
-    // may be NV12 (which MPImage rejects) and, on a portrait phone,
-    // it is a landscape sensor buffer holding a sideways face
-    // (rotation uncompensated) — both make detection return nothing
-    // while grades keep working. The upright buffer fixes both;
-    // landmarks map back to buffer coordinates for drawing, so the
-    // rest of the pipeline is unchanged.
-    let detectionBuffer = uprightBGRABuffer(from: pixelBuffer, rotation: rotation) ?? pixelBuffer
     // VIDEO mode requires strictly increasing timestamps (M1 rule).
     let timestampMs = max(timestampNs / 1_000_000, lastTimestampMs + 1)
     lastTimestampMs = timestampMs
     do {
-      let image = try MPImage(pixelBuffer: detectionBuffer)
+      let image = try MPImage(pixelBuffer: pixelBuffer)
       let result = try landmarker.detect(
         videoFrame: image,
         timestampInMilliseconds: Int(timestampMs)
       )
       guard let first = result.faceLandmarks.first else { return nil }
-      let uprightPoints = first.map { (x: Double($0.x), y: Double($0.y)) }
-      let points = uprightPoints.map { mapBack($0, rotation: rotation) }
+      let points = first.map { (x: Double($0.x), y: Double($0.y)) }
       let xs = points.map { $0.x }
       let ys = points.map { $0.y }
       guard let minX = xs.min(), let maxX = xs.max(),
