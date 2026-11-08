@@ -22,13 +22,18 @@ android {
     minSdk 23
   }
 
+  // The RN 0.86 / EAS toolchain compiles Java at 17. Kotlin must
+  // target the same JVM version or AGP fails the build with
+  // "Inconsistent JVM Target Compatibility" (Android build 38 died
+  // at :react-native-ar-effects:compileReleaseKotlin on a 17 vs 1.8
+  // split). Bytecode version only; no source change.
   compileOptions {
-    sourceCompatibility JavaVersion.VERSION_1_8
-    targetCompatibility JavaVersion.VERSION_1_8
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
   }
 
   kotlinOptions {
-    jvmTarget = "1.8"
+    jvmTarget = "17"
   }
 }
 
